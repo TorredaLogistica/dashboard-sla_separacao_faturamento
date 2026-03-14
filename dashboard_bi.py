@@ -103,23 +103,29 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 @st.cache_data
 def load_data():
 
-    arquivo = "Faturamento SLA 2026.XLSX"
+    arquivos = [f for f in os.listdir() if f.lower().endswith((".xlsx", ".xls"))]
+
+    if len(arquivos) == 0:
+        st.error("Nenhum arquivo Excel encontrado no repositório.")
+        st.stop()
+
+    arquivo = arquivos[0]
 
     df = pd.read_excel(arquivo)
 
     df.columns = df.columns.str.strip()
 
-    df['Data NF'] = pd.to_datetime(df['Data NF'], errors='coerce')
+    df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
 
-    df = df.dropna(subset=['Data NF'])
+    df = df.dropna(subset=["Data NF"])
 
-    df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
+    df["Mes_Ano"] = df["Data NF"].dt.strftime("%m/%Y")
 
-    aging = df['Aging_Ajustado_D+'].astype(str)
+    aging = df["Aging_Ajustado_D+"].astype(str)
 
-    df['flag_d0'] = aging.str.contains('D\+0', regex=True)
-    df['flag_d1'] = aging.str.contains('D\+1', regex=True)
-    df['flag_d2'] = aging.str.contains('D\+2', regex=True)
+    df["flag_d0"] = aging.str.contains("D\+0", regex=True)
+    df["flag_d1"] = aging.str.contains("D\+1", regex=True)
+    df["flag_d2"] = aging.str.contains("D\+2", regex=True)
 
     return df
 
