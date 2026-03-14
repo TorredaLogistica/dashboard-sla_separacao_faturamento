@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
+import os
 import zipfile
 
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
@@ -68,7 +69,13 @@ st.caption(
 @st.cache_data(ttl=900)
 def load_data():
 
-    with zipfile.ZipFile("Separação e Faturamento SLA.zip") as z::
+    caminho = "Separação e Faturamento SLA.zip"
+
+    if not os.path.exists(caminho):
+        st.error("Arquivo ZIP não encontrado no repositório.")
+        st.stop()
+
+    with zipfile.ZipFile(caminho) as z:
 
         nome_csv = z.namelist()[0]
 
@@ -92,23 +99,17 @@ def load_data():
 
     df.columns = df.columns.str.strip()
 
-    df["Data NF"] = pd.to_datetime(
-        df["Data NF"],
-        errors="coerce"
-    )
+    df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
 
     df["Mes_Ano"] = df["Data NF"].dt.strftime("%m/%Y")
 
     aging = df["Aging_Ajustado_D+"].astype(str)
 
     df["flag_d0"] = aging.str.contains("D+0", na=False)
-
     df["flag_d1"] = aging.str.contains("D+1", na=False)
-
     df["flag_d2"] = aging.str.contains("D+2", na=False)
 
     return df
-
 
 with st.spinner("Carregando base de dados..."):
 
