@@ -103,7 +103,7 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 @st.cache_data(ttl=900)
 def load_data():
 
-    caminho_zip = "Faturamento SLA 2025 - Novo Ajuste.ZIP"
+    caminho_zip = "Faturamento SLA 2025 - Novo Ajuste.zip"
 
     if not os.path.exists(caminho_zip):
         st.error("Arquivo ZIP não encontrado no repositório.")
