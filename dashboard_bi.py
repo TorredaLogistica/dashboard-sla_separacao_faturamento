@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import os
+import zipfile
 
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
@@ -97,21 +98,50 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
     return METAS_CLARO_BRASIL.get(mes, 85.0)
 
 # =============================
-# CARGA DE DADOS
+# CARGA DE DADOS (GITHUB / STREAMLIT CLOUD)
 # =============================
-@st.cache_data
-def load_data(path):
-    df = pd.read_excel(path)
+@st.cache_data(ttl=900)
+def load_data():
+
+    caminho_zip = "Faturamento SLA 2025 - Novo Ajuste.ZIP"
+
+    if not os.path.exists(caminho_zip):
+        st.error("Arquivo ZIP não encontrado no repositório.")
+        st.stop()
+
+    with zipfile.ZipFile(caminho_zip) as z:
+
+        # pega o primeiro arquivo dentro do zip
+        nome_csv = z.namelist()[0]
+
+        with z.open(nome_csv) as f:
+
+            df = pd.read_csv(
+                f,
+                sep=";",        # separador correto do CSV
+                low_memory=False
+            )
+
+    # limpar nomes das colunas
     df.columns = df.columns.str.strip()
-    df['Data NF'] = pd.to_datetime(df['Data NF'])
-    df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
-    df['flag_d0'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+0')
-    df['flag_d1'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+1')
-    df['flag_d2'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+2')
+
+    # converter data
+    df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
+
+    # criar mês
+    df["Mes_Ano"] = df["Data NF"].dt.strftime("%m/%Y")
+
+    # flags SLA
+    aging = df["Aging_Ajustado_D+"].astype(str)
+
+    df["flag_d0"] = aging.str.contains("D+0", na=False)
+    df["flag_d1"] = aging.str.contains("D+1", na=False)
+    df["flag_d2"] = aging.str.contains("D+2", na=False)
+
     return df
 
-caminho_arquivo = os.path.join(os.path.expanduser("~"), "Desktop", "Faturamento SLA 2025 - Novo Ajuste.xlsx")
-df = load_data(caminho_arquivo)
+
+df = load_data()
 
 # =============================
 # SIDEBAR
