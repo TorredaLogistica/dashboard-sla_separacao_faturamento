@@ -36,10 +36,44 @@ st.title("Dashboard SLA Separação e Faturamento")
 st.caption(f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
 # =============================
-# LINK DO EXCEL (ONEDRIVE / SHAREPOINT)
+# CARGA DE DADOS OTIMIZADA (CSV ZIP)
 # =============================
 
-url_excel = "https://corpclarobr.sharepoint.com/:x:/s/USER-IndicadoresemPowerBI/IQBahNLMGezRT5ak1HteRYqCAUgUkkeW68ge9Rtus46WstE?e=Zn4B2Q&download=1"
+@st.cache_data(ttl=900)
+def load_data():
+
+    df = pd.read_csv(
+        "base_sla.zip",
+        compression="zip",
+        usecols=[
+            "Data NF",
+            "Aging_Ajustado_D+",
+            "Pedido",
+            "Operador",
+            "CD Origem",
+            "Empresa",
+            "Canal",
+            "Unidade de Negocio",
+            "Canal de Atuacao"
+        ],
+        low_memory=False
+    )
+
+    df.columns = df.columns.str.strip()
+
+    df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
+
+    df["Mes_Ano"] = df["Data NF"].dt.strftime("%m/%Y")
+
+    aging = df["Aging_Ajustado_D+"].astype(str)
+
+    df["flag_d0"] = aging.str.contains("D+0", na=False)
+
+    df["flag_d1"] = aging.str.contains("D+1", na=False)
+
+    df["flag_d2"] = aging.str.contains("D+2", na=False)
+
+    return df
 
 # =============================
 # CARGA DE DADOS OTIMIZADA
@@ -78,8 +112,8 @@ def load_data(path):
     return df
 
 
-with st.spinner("Carregando dados do OneDrive..."):
-    df = load_data(url_excel)
+with st.spinner("Carregando base de dados..."):
+    df = load_data()
 
 # =============================
 # METAS
