@@ -83,21 +83,26 @@ def load_data():
 
             df = pd.read_csv(
                 f,
-                usecols=[
-                    "Data NF",
-                    "Aging_Ajustado_D+",
-                    "Pedido",
-                    "Operador",
-                    "CD Origem",
-                    "Empresa",
-                    "Canal",
-                    "Unidade de Negocio",
-                    "Canal de Atuacao"
-                ],
                 low_memory=False
             )
 
+    # limpa espaços dos nomes das colunas
     df.columns = df.columns.str.strip()
+
+    # seleciona somente as colunas necessárias
+    colunas = [
+        "Data NF",
+        "Aging_Ajustado_D+",
+        "Pedido",
+        "Operador",
+        "CD Origem",
+        "Empresa",
+        "Canal",
+        "Unidade de Negocio",
+        "Canal de Atuacao"
+    ]
+
+    df = df[[c for c in colunas if c in df.columns]]
 
     df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
 
