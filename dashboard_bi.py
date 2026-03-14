@@ -40,7 +40,7 @@ st.title("Dashboard SLA Separação e Faturamento")
 st.caption(f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
 # =============================
-# CARGA DE DADOS (ZIP GITHUB)
+# CARGA DE DADOS
 # =============================
 @st.cache_data(ttl=3600)
 def load_data():
@@ -73,9 +73,10 @@ def load_data():
 
     aging = df["Aging_Ajustado_D+"].astype(str)
 
-    df["flag_d0"] = aging.str.contains("D+0", na=False)
-    df["flag_d1"] = aging.str.contains("D+1", na=False)
-    df["flag_d2"] = aging.str.contains("D+2", na=False)
+    df["flag_d0"] = aging.str.contains(r"D\+0", regex=True, na=False)
+    df["flag_d1"] = aging.str.contains(r"D\+1", regex=True, na=False)
+    df["flag_d2"] = aging.str.contains(r"D\+2", regex=True, na=False)
+    df["flag_d3"] = aging.str.contains(r"D\+3", regex=True, na=False)
 
     return df
 
@@ -86,11 +87,6 @@ df = load_data()
 # SIDEBAR
 # =============================
 with st.sidebar:
-
-    if os.path.exists("logo_claro.png"):
-        st.image("logo_claro.png", use_container_width=True)
-    else:
-        st.markdown("<h2 style='text-align:center;color:#e1261c'>CLARO</h2>", unsafe_allow_html=True)
 
     aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal"])
 
@@ -107,7 +103,6 @@ with st.sidebar:
     filtros = ["Operador","CD Origem","Empresa","Canal","Unidade de Negocio","Canal de Atuacao"]
 
     mask = np.ones(len(df), dtype=bool)
-    filtros_selecionados = {}
 
     for col in filtros:
 
@@ -115,20 +110,16 @@ with st.sidebar:
 
             vals = st.multiselect(col, sorted(df[col].dropna().unique()))
 
-            filtros_selecionados[col] = vals
-
             if vals:
                 mask &= df[col].isin(vals)
 
 dff_global = df[mask].copy()
 
 # =============================
-# DASHBOARD
+# BASE DE DADOS
 # =============================
 
 if aba == "📅 Visão Diária":
-
-    st.subheader(f"Indicadores Consolidados - {mes_selecionado}")
 
     base = dff_global[dff_global["Mes_Ano"] == mes_selecionado].copy()
 
@@ -147,9 +138,6 @@ else:
     meses_filtrados = meses_disponiveis[-periodo:]
 
     base = dff_global[dff_global["Mes_Ano"].isin(meses_filtrados)].copy()
-
-    st.subheader(f"Evolução mensal ({periodo} meses)")
-
 
 # =============================
 # KPIs
@@ -225,6 +213,16 @@ for col in ["Até D+0","Até D+1","Até D+2"]:
         )
     )
 
+# linha da meta
+fig.add_trace(
+    go.Scatter(
+        x=res["Mês"],
+        y=[85]*len(res),
+        name="Meta",
+        line=dict(dash="dash", color="black")
+    )
+)
+
 fig.update_layout(
     hovermode="x unified",
     legend=dict(orientation="h", y=1.02)
@@ -266,7 +264,7 @@ fig_bar = px.bar(
     y="Até D+1",
     text=rank["Até D+1"].round(2),
     color="Até D+1",
-    color_continuous_scale="RdYlGn"
+    color_continuous_scale=["red","yellow","green"]
 )
 
 st.plotly_chart(fig_bar, use_container_width=True)
