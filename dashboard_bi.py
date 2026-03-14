@@ -75,6 +75,7 @@ def load_data():
         st.error("Arquivo ZIP não encontrado no repositório.")
         st.stop()
 
+    # abre o zip
     with zipfile.ZipFile(caminho) as z:
 
         nome_csv = z.namelist()[0]
@@ -86,59 +87,57 @@ def load_data():
                 low_memory=False
             )
 
-    # limpa espaços dos nomes
+    # limpa nomes das colunas
     df.columns = df.columns.str.strip()
 
-    # transforma nomes em padrão simples
-    df.columns = df.columns.str.replace(" ", "_")
+    # mostra colunas no log do streamlit (diagnóstico)
+    st.write("Colunas encontradas:", list(df.columns))
 
-    # mapa de possíveis nomes
-    mapa = {
-        "Data_NF": ["Data_NF","DataNF","Data_da_NF","DT_NF"],
-        "Aging_Ajustado_D+": ["Aging_Ajustado_D+","Aging_D+","Aging"],
-        "Pedido": ["Pedido","Numero_Pedido","Pedido_ID"],
-        "Operador": ["Operador"],
-        "CD_Origem": ["CD_Origem","CD_Origem_"],
-        "Empresa": ["Empresa"],
-        "Canal": ["Canal"],
-        "Unidade_de_Negocio": ["Unidade_de_Negocio","Unidade_Negocio"],
-        "Canal_de_Atuacao": ["Canal_de_Atuacao","Canal_Atuacao"]
-    }
+    # tenta identificar coluna de data automaticamente
+    coluna_data = None
 
-    # renomeia colunas automaticamente
-    for novo, possiveis in mapa.items():
-        for p in possiveis:
-            if p in df.columns:
-                df.rename(columns={p:novo}, inplace=True)
-                break
+    for col in df.columns:
 
-    # garante colunas necessárias
-    colunas_necessarias = [
-        "Data_NF",
-        "Aging_Ajustado_D+",
-        "Pedido",
-        "Operador",
-        "CD_Origem",
-        "Empresa",
-        "Canal",
-        "Unidade_de_Negocio",
-        "Canal_de_Atuacao"
-    ]
+        if "data" in col.lower():
 
-    df = df[[c for c in colunas_necessarias if c in df.columns]]
+            coluna_data = col
+            break
 
+    if coluna_data is None:
+
+        st.error("Nenhuma coluna de data encontrada no arquivo.")
+        st.stop()
+
+    # renomeia para padrão
+    df.rename(columns={coluna_data: "Data_NF"}, inplace=True)
+
+    # converte data
     df["Data_NF"] = pd.to_datetime(df["Data_NF"], errors="coerce")
 
     df["Mes_Ano"] = df["Data_NF"].dt.strftime("%m/%Y")
 
-    aging = df["Aging_Ajustado_D+"].astype(str)
+    # identifica coluna de aging
+    coluna_aging = None
+
+    for col in df.columns:
+
+        if "aging" in col.lower():
+
+            coluna_aging = col
+            break
+
+    if coluna_aging is None:
+
+        st.error("Coluna de Aging não encontrada.")
+        st.stop()
+
+    aging = df[coluna_aging].astype(str)
 
     df["flag_d0"] = aging.str.contains("D+0", na=False)
     df["flag_d1"] = aging.str.contains("D+1", na=False)
     df["flag_d2"] = aging.str.contains("D+2", na=False)
 
     return df
-
 with st.spinner("Carregando base de dados..."):
 
     df = load_data()
