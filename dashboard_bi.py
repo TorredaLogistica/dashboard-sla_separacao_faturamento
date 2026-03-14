@@ -1,67 +1,101 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
+import zipfile
 
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
 # LOGIN
 # =============================
+
 def check_password():
+
     def password_entered():
+
         if st.session_state["password"] == "claro2026":
             st.session_state["password_correct"] = True
             del st.session_state["password"]
+
         else:
             st.session_state["password_correct"] = False
-    
+
     if "password_correct" not in st.session_state:
+
         st.title("🔒 Acesso Restrito")
-        st.text_input("Digite a senha", type="password", on_change=password_entered, key="password")
+
+        st.text_input(
+            "Digite a senha",
+            type="password",
+            on_change=password_entered,
+            key="password"
+        )
+
         st.stop()
+
     elif not st.session_state["password_correct"]:
-        st.text_input("Digite a senha", type="password", on_change=password_entered, key="password")
+
+        st.text_input(
+            "Digite a senha",
+            type="password",
+            on_change=password_entered,
+            key="password"
+        )
+
         st.error("Senha incorreta")
+
         st.stop()
+
 
 check_password()
 
 # =============================
 # CABEÇALHO
 # =============================
+
 st.title("Dashboard SLA Separação e Faturamento")
-st.caption(f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+st.caption(
+    f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+)
 
 # =============================
-# CARGA DE DADOS OTIMIZADA (CSV ZIP)
+# CARGA DE DADOS (CSV ZIP)
 # =============================
 
 @st.cache_data(ttl=900)
 def load_data():
 
-    df = pd.read_csv(
-        "base_sla.zip",
-        compression="zip",
-        usecols=[
-            "Data NF",
-            "Aging_Ajustado_D+",
-            "Pedido",
-            "Operador",
-            "CD Origem",
-            "Empresa",
-            "Canal",
-            "Unidade de Negocio",
-            "Canal de Atuacao"
-        ],
-        low_memory=False
-    )
+    with zipfile.ZipFile("base_sla.zip") as z:
+
+        nome_csv = z.namelist()[0]
+
+        with z.open(nome_csv) as f:
+
+            df = pd.read_csv(
+                f,
+                usecols=[
+                    "Data NF",
+                    "Aging_Ajustado_D+",
+                    "Pedido",
+                    "Operador",
+                    "CD Origem",
+                    "Empresa",
+                    "Canal",
+                    "Unidade de Negocio",
+                    "Canal de Atuacao"
+                ],
+                low_memory=False
+            )
 
     df.columns = df.columns.str.strip()
 
-    df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
+    df["Data NF"] = pd.to_datetime(
+        df["Data NF"],
+        errors="coerce"
+    )
 
     df["Mes_Ano"] = df["Data NF"].dt.strftime("%m/%Y")
 
@@ -75,44 +109,9 @@ def load_data():
 
     return df
 
-# =============================
-# CARGA DE DADOS OTIMIZADA
-# =============================
-
-@st.cache_data(ttl=900)
-def load_data(path):
-
-    df = pd.read_excel(
-        path,
-        usecols=[
-            "Data NF",
-            "Aging_Ajustado_D+",
-            "Pedido",
-            "Operador",
-            "CD Origem",
-            "Empresa",
-            "Canal",
-            "Unidade de Negocio",
-            "Canal de Atuacao"
-        ]
-    )
-
-    df.columns = df.columns.str.strip()
-
-    df["Data NF"] = pd.to_datetime(df["Data NF"])
-
-    df["Mes_Ano"] = df["Data NF"].dt.strftime("%m/%Y")
-
-    df["flag_d0"] = df["Aging_Ajustado_D+"].astype(str).str.contains("D\+0")
-
-    df["flag_d1"] = df["Aging_Ajustado_D+"].astype(str).str.contains("D\+1")
-
-    df["flag_d2"] = df["Aging_Ajustado_D+"].astype(str).str.contains("D\+2")
-
-    return df
-
 
 with st.spinner("Carregando base de dados..."):
+
     df = load_data()
 
 # =============================
@@ -142,7 +141,7 @@ with st.sidebar:
     )
 
     lista_meses = sorted(
-        df["Mes_Ano"].unique(),
+        df["Mes_Ano"].dropna().unique(),
         key=lambda x: datetime.strptime(x,"%m/%Y"),
         reverse=True
     )
@@ -161,24 +160,20 @@ with st.sidebar:
         "Canal de Atuacao"
     ]
 
-    mask = np.ones(len(df), dtype=bool)
-
-    filtros_selecionados = {}
+    mask = pd.Series(True, index=df.index)
 
     for col in filtros:
 
         if col in df.columns:
 
-            vals = st.multiselect(
+            valores = st.multiselect(
                 col,
                 sorted(df[col].dropna().unique())
             )
 
-            filtros_selecionados[col] = vals
+            if valores:
 
-            if vals:
-
-                mask &= df[col].isin(vals)
+                mask &= df[col].isin(valores)
 
 dff_global = df[mask].copy()
 
@@ -190,7 +185,9 @@ if aba == "📅 Visão Diária":
 
     st.subheader(f"Indicadores - {mes_selecionado}")
 
-    base = dff_global[dff_global["Mes_Ano"] == mes_selecionado].copy()
+    base = dff_global[
+        dff_global["Mes_Ano"] == mes_selecionado
+    ].copy()
 
 else:
 
@@ -201,7 +198,7 @@ else:
     )
 
     meses = sorted(
-        dff_global["Mes_Ano"].unique(),
+        dff_global["Mes_Ano"].dropna().unique(),
         key=lambda x: datetime.strptime(x,"%m/%Y")
     )
 
@@ -229,22 +226,22 @@ if total > 0:
 
     c4.metric("Total Pedidos", f"{total:,}")
 
+    # =============================
     # AGRUPAMENTO
+    # =============================
 
     if aba == "📅 Visão Diária":
 
         res = base.groupby("Data NF").agg(
-            {
-                "flag_d0":"sum",
-                "flag_d1":"sum",
-                "flag_d2":"sum",
-                "Pedido":"count"
-            }
+            flag_d0=("flag_d0","sum"),
+            flag_d1=("flag_d1","sum"),
+            flag_d2=("flag_d2","sum"),
+            Pedido=("Pedido","count")
         ).reset_index()
 
         res["Até D+1"] = (
-            (res["flag_d0"]+res["flag_d1"])
-            /res["Pedido"]*100
+            (res["flag_d0"] + res["flag_d1"])
+            / res["Pedido"] * 100
         )
 
         res["Data"] = res["Data NF"].dt.strftime("%d/%m")
@@ -252,22 +249,22 @@ if total > 0:
     else:
 
         res = base.groupby("Mes_Ano").agg(
-            {
-                "flag_d0":"sum",
-                "flag_d1":"sum",
-                "flag_d2":"sum",
-                "Pedido":"count"
-            }
+            flag_d0=("flag_d0","sum"),
+            flag_d1=("flag_d1","sum"),
+            flag_d2=("flag_d2","sum"),
+            Pedido=("Pedido","count")
         ).reset_index()
 
         res["Até D+1"] = (
-            (res["flag_d0"]+res["flag_d1"])
-            /res["Pedido"]*100
+            (res["flag_d0"] + res["flag_d1"])
+            / res["Pedido"] * 100
         )
 
         res["Data"] = res["Mes_Ano"]
 
-    # GRAFICO
+    # =============================
+    # GRÁFICO
+    # =============================
 
     fig = go.Figure()
 
@@ -287,7 +284,10 @@ if total > 0:
         annotation_text="Meta 85%"
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
 else:
 
