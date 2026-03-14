@@ -97,21 +97,33 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
     return METAS_CLARO_BRASIL.get(mes, 85.0)
 
 # =============================
-# CARGA DE DADOS
+# CARGA DE DADOS (GITHUB)
 # =============================
+
 @st.cache_data
-def load_data(path):
-    df = pd.read_excel(path)
+def load_data():
+
+    arquivo = "Faturamento SLA 2026.XLSX"
+
+    df = pd.read_excel(arquivo)
+
     df.columns = df.columns.str.strip()
-    df['Data NF'] = pd.to_datetime(df['Data NF'])
+
+    df['Data NF'] = pd.to_datetime(df['Data NF'], errors='coerce')
+
+    df = df.dropna(subset=['Data NF'])
+
     df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
-    df['flag_d0'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+0')
-    df['flag_d1'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+1')
-    df['flag_d2'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+2')
+
+    aging = df['Aging_Ajustado_D+'].astype(str)
+
+    df['flag_d0'] = aging.str.contains('D\+0', regex=True)
+    df['flag_d1'] = aging.str.contains('D\+1', regex=True)
+    df['flag_d2'] = aging.str.contains('D\+2', regex=True)
+
     return df
 
-caminho_arquivo = os.path.join(os.path.expanduser("~"), "Desktop", "Faturamento SLA 2025 - Novo Ajuste.xlsx")
-df = load_data(caminho_arquivo)
+df = load_data()
 
 # =============================
 # SIDEBAR
