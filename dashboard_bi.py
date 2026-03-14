@@ -153,7 +153,11 @@ with st.sidebar:
         st.markdown("<h2 style='text-align: center; color: #e1261c;'>CLARO</h2>", unsafe_allow_html=True)
     
     aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal"], horizontal=True)
-    lista_meses = sorted(df['Mes_Ano'].unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
+    lista_meses = sorted(
+    df['Mes_Ano'].dropna().unique(),
+    key=lambda x: datetime.strptime(str(x), '%m/%Y'),
+    reverse=True
+)
     mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
     
     filtros = ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']
