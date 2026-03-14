@@ -90,7 +90,7 @@ def obter_meta(empresa, mes):
 @st.cache_data
 def load_data():
 
-    caminho_zip = "base_sla.zip"
+    caminho_zip = "Faturamento SLA 2025 - Novo Ajuste.zip"
 
     with zipfile.ZipFile(caminho_zip) as z:
 
