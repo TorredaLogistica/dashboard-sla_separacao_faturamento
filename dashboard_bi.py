@@ -4,6 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
+import pytz
 import os
 import zipfile
 
@@ -36,12 +37,32 @@ check_password()
 # =============================
 # CABEÇALHO
 # =============================
+
+fuso = pytz.timezone("America/Sao_Paulo")
+agora = datetime.now(fuso)
+
 st.title("Dashboard SLA Separação e Faturamento")
-st.caption(f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+st.caption(f"Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}")
+
+# =============================
+# METAS
+# =============================
+
+METAS = {
+"01/2026":94.45,
+"02/2026":94.65,
+"03/2026":94.63,
+"04/2026":94.93,
+"05/2026":94.31
+}
+
+def obter_meta(mes):
+    return METAS.get(mes,85)
 
 # =============================
 # CARGA DE DADOS
 # =============================
+
 @st.cache_data(ttl=3600)
 def load_data():
 
@@ -76,27 +97,25 @@ def load_data():
     df["flag_d0"] = aging.str.contains(r"D\+0", regex=True, na=False)
     df["flag_d1"] = aging.str.contains(r"D\+1", regex=True, na=False)
     df["flag_d2"] = aging.str.contains(r"D\+2", regex=True, na=False)
-    df["flag_d3"] = aging.str.contains(r"D\+3", regex=True, na=False)
 
     return df
-
 
 df = load_data()
 
 # =============================
 # SIDEBAR
 # =============================
+
 with st.sidebar:
+
+    logo_path = "logo_claro.png"
+
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=180)
 
     aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal"])
 
-    lista_meses = (
-        pd.to_datetime(df["Mes_Ano"], format="%m/%Y", errors="coerce")
-        .dropna()
-        .sort_values(ascending=False)
-        .dt.strftime("%m/%Y")
-        .unique()
-    )
+    lista_meses = sorted(df["Mes_Ano"].unique(), reverse=True)
 
     mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
 
@@ -113,31 +132,23 @@ with st.sidebar:
             if vals:
                 mask &= df[col].isin(vals)
 
-dff_global = df[mask].copy()
+dff = df[mask].copy()
 
 # =============================
-# BASE DE DADOS
+# BASE
 # =============================
 
 if aba == "📅 Visão Diária":
 
-    base = dff_global[dff_global["Mes_Ano"] == mes_selecionado].copy()
+    base = dff[dff["Mes_Ano"] == mes_selecionado]
 
 else:
 
-    periodo = st.radio("Período acumulado", [3,6,9,12,24], index=3)
+    periodo = st.radio("Período acumulado", [3,6,9,12], index=3)
 
-    meses_disponiveis = (
-        pd.to_datetime(dff_global["Mes_Ano"], format="%m/%Y", errors="coerce")
-        .dropna()
-        .sort_values()
-        .dt.strftime("%m/%Y")
-        .unique()
-    )
+    meses = sorted(dff["Mes_Ano"].unique())
 
-    meses_filtrados = meses_disponiveis[-periodo:]
-
-    base = dff_global[dff_global["Mes_Ano"].isin(meses_filtrados)].copy()
+    base = dff[dff["Mes_Ano"].isin(meses[-periodo:])]
 
 # =============================
 # KPIs
@@ -175,7 +186,11 @@ if aba == "📅 Visão Diária":
     res["Até D+1"] = (res["D0"]+res["D1"])/res["Pedido"]*100
     res["Até D+2"] = (res["D0"]+res["D1"]+res["D2"])/res["Pedido"]*100
 
-    res["Mês"] = res["Data NF"].dt.strftime("%d/%m")
+    res["Meta"] = obter_meta(mes_selecionado)
+
+    res["Data"] = res["Data NF"].dt.strftime("%d/%m/%Y")
+
+    eixo = "Data"
 
 else:
 
@@ -186,15 +201,13 @@ else:
         D2=("flag_d2","sum")
     ).reset_index()
 
-    res["data_sort"] = pd.to_datetime(res["Mes_Ano"], format="%m/%Y")
-
-    res = res.sort_values("data_sort")
-
     res["Até D+0"] = res["D0"]/res["Pedido"]*100
     res["Até D+1"] = (res["D0"]+res["D1"])/res["Pedido"]*100
     res["Até D+2"] = (res["D0"]+res["D1"]+res["D2"])/res["Pedido"]*100
 
-    res["Mês"] = res["Mes_Ano"]
+    res["Meta"] = res["Mes_Ano"].apply(obter_meta)
+
+    eixo = "Mes_Ano"
 
 # =============================
 # GRÁFICO
@@ -206,26 +219,20 @@ for col in ["Até D+0","Até D+1","Até D+2"]:
 
     fig.add_trace(
         go.Scatter(
-            x=res["Mês"],
+            x=res[eixo],
             y=res[col],
             mode="lines+markers",
             name=col
         )
     )
 
-# linha da meta
 fig.add_trace(
     go.Scatter(
-        x=res["Mês"],
-        y=[85]*len(res),
+        x=res[eixo],
+        y=res["Meta"],
         name="Meta",
         line=dict(dash="dash", color="black")
     )
-)
-
-fig.update_layout(
-    hovermode="x unified",
-    legend=dict(orientation="h", y=1.02)
 )
 
 st.plotly_chart(fig, use_container_width=True)
@@ -234,15 +241,15 @@ st.plotly_chart(fig, use_container_width=True)
 # TABELA
 # =============================
 
-view = res[["Mês","Pedido","Até D+0","Até D+1","Até D+2"]].copy()
+view = res[[eixo,"Meta","Até D+0","Até D+1","Até D+2","Pedido"]]
 
-for c in ["Até D+0","Até D+1","Até D+2"]:
+for c in ["Até D+0","Até D+1","Até D+2","Meta"]:
     view[c] = view[c].apply(lambda x: f"{x:.2f}%")
 
 st.dataframe(view, use_container_width=True, hide_index=True)
 
 # =============================
-# RANKING CD
+# RANKING
 # =============================
 
 st.markdown("---")
@@ -262,9 +269,11 @@ fig_bar = px.bar(
     rank,
     x="CD Origem",
     y="Até D+1",
-    text=rank["Até D+1"].round(2),
+    text=rank["Até D+1"].apply(lambda x: f"{x:.2f}%"),
     color="Até D+1",
     color_continuous_scale=["red","yellow","green"]
 )
+
+fig_bar.update_traces(textposition="outside")
 
 st.plotly_chart(fig_bar, use_container_width=True)
