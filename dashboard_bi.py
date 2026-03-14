@@ -39,7 +39,7 @@ st.caption(f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 # LINK DO EXCEL (ONEDRIVE / SHAREPOINT)
 # =============================
 
-url_excel = "https://corpclarobr.sharepoint.com/sites/USER-IndicadoresemPowerBI/_layouts/15/download.aspx?SourceUrl=/sites/USER-IndicadoresemPowerBI/Documentos%20Compartilhados/Geral/Phayton/Faturamento%20SLA%202025%20-%20Novo%20Ajuste.xlsx"
+url_excel = "https://corpclarobr.sharepoint.com/:x:/s/USER-IndicadoresemPowerBI/IQBahNLMGezRT5ak1HteRYqCAUgUkkeW68ge9Rtus46WstE?e=Zn4B2Q&download=1"
 
 # =============================
 # CARGA DE DADOS OTIMIZADA
