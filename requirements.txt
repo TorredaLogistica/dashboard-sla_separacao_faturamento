@@ -1,1 +1,5 @@
-https://corpclarobr.sharepoint.com/:x:/r/sites/USER-IndicadoresemPowerBI/Documentos%20Compartilhados/Geral/Phayton/Faturamento%20SLA%202025%20-%20Novo%20Ajuste.xlsx?d=wccd2845aec194fd196a4d47b5e458a82&csf=1&web=1&e=VXtPhE
+streamlit
+pandas
+numpy
+plotly
+openpyxl
