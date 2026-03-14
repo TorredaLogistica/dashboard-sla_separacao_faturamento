@@ -86,27 +86,50 @@ def load_data():
                 low_memory=False
             )
 
-    # limpa espaços dos nomes das colunas
+    # limpa espaços dos nomes
     df.columns = df.columns.str.strip()
 
-    # seleciona somente as colunas necessárias
-    colunas = [
-        "Data NF",
+    # transforma nomes em padrão simples
+    df.columns = df.columns.str.replace(" ", "_")
+
+    # mapa de possíveis nomes
+    mapa = {
+        "Data_NF": ["Data_NF","DataNF","Data_da_NF","DT_NF"],
+        "Aging_Ajustado_D+": ["Aging_Ajustado_D+","Aging_D+","Aging"],
+        "Pedido": ["Pedido","Numero_Pedido","Pedido_ID"],
+        "Operador": ["Operador"],
+        "CD_Origem": ["CD_Origem","CD_Origem_"],
+        "Empresa": ["Empresa"],
+        "Canal": ["Canal"],
+        "Unidade_de_Negocio": ["Unidade_de_Negocio","Unidade_Negocio"],
+        "Canal_de_Atuacao": ["Canal_de_Atuacao","Canal_Atuacao"]
+    }
+
+    # renomeia colunas automaticamente
+    for novo, possiveis in mapa.items():
+        for p in possiveis:
+            if p in df.columns:
+                df.rename(columns={p:novo}, inplace=True)
+                break
+
+    # garante colunas necessárias
+    colunas_necessarias = [
+        "Data_NF",
         "Aging_Ajustado_D+",
         "Pedido",
         "Operador",
-        "CD Origem",
+        "CD_Origem",
         "Empresa",
         "Canal",
-        "Unidade de Negocio",
-        "Canal de Atuacao"
+        "Unidade_de_Negocio",
+        "Canal_de_Atuacao"
     ]
 
-    df = df[[c for c in colunas if c in df.columns]]
+    df = df[[c for c in colunas_necessarias if c in df.columns]]
 
-    df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
+    df["Data_NF"] = pd.to_datetime(df["Data_NF"], errors="coerce")
 
-    df["Mes_Ano"] = df["Data NF"].dt.strftime("%m/%Y")
+    df["Mes_Ano"] = df["Data_NF"].dt.strftime("%m/%Y")
 
     aging = df["Aging_Ajustado_D+"].astype(str)
 
