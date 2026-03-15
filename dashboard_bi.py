@@ -8,9 +8,9 @@ import os
 
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
-# =============================
+# =====================================
 # LOGIN
-# =============================
+# =====================================
 
 def check_password():
 
@@ -33,9 +33,9 @@ def check_password():
 
 check_password()
 
-# =============================
+# =====================================
 # HORA BRASIL
-# =============================
+# =====================================
 
 brasil = pytz.timezone("America/Sao_Paulo")
 agora = datetime.now(brasil)
@@ -43,13 +43,14 @@ agora = datetime.now(brasil)
 st.title("Dashboard SLA Separação e Faturamento")
 st.caption(f"Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}")
 
-# =============================
+# =====================================
 # METAS
-# =============================
+# =====================================
 
 METAS_CLARO_BRASIL = {
-"01/2025":76.09,"02/2025":74.38,"03/2025":79.52,"04/2025":72.28,"05/2025":81.73,"06/2025":88.07,
-"07/2025":82.91,"08/2025":89.19,"09/2025":92.77,"10/2025":88.68,"11/2025":82.47,"12/2025":85.94,
+"01/2025":76.09,"02/2025":74.38,"03/2025":79.52,"04/2025":72.28,
+"05/2025":81.73,"06/2025":88.07,"07/2025":82.91,"08/2025":89.19,
+"09/2025":92.77,"10/2025":88.68,"11/2025":82.47,"12/2025":85.94,
 "01/2026":94.45,"02/2026":94.65,"03/2026":94.63,"04/2026":94.93
 }
 
@@ -76,9 +77,9 @@ def obter_meta(mes, empresa):
 
     return METAS_CLARO_BRASIL.get(mes,85)
 
-# =============================
+# =====================================
 # LEITURA XLSB
-# =============================
+# =====================================
 
 @st.cache_data
 def load_data():
@@ -95,7 +96,7 @@ def load_data():
 
     df.columns=df.columns.str.strip()
 
-    # corrigir data
+    # corrigir datas
 
     if pd.api.types.is_numeric_dtype(df["Data NF"]):
 
@@ -126,9 +127,9 @@ def load_data():
 
 df=load_data()
 
-# =============================
+# =====================================
 # SIDEBAR
-# =============================
+# =====================================
 
 with st.sidebar:
 
@@ -140,6 +141,10 @@ with st.sidebar:
     meses=df.sort_values("Mes_Ano_dt",ascending=False)["Mes_Ano"].unique()
 
     mes=st.selectbox("Mês",meses)
+
+    if aba=="Evolução Mensal":
+
+        periodo=st.selectbox("Meses acumulados",[3,6,9,12,24],index=3)
 
     filtros=["Operador","CD Origem","Empresa","Canal","Unidade de Negocio","Canal de Atuacao"]
 
@@ -157,11 +162,25 @@ with st.sidebar:
 
 df=df[mask]
 
-# =============================
+# =====================================
 # BASE
-# =============================
+# =====================================
 
-base=df[df["Mes_Ano"]==mes]
+if aba=="Visão Diária":
+
+    base=df[df["Mes_Ano"]==mes]
+
+else:
+
+    meses=df.sort_values("Mes_Ano_dt")["Mes_Ano"].unique()
+
+    meses_periodo=meses[-periodo:]
+
+    base=df[df["Mes_Ano"].isin(meses_periodo)]
+
+# =====================================
+# KPIs
+# =====================================
 
 total=len(base)
 
@@ -177,31 +196,85 @@ c2.metric("Até D+1",f"{p1/total*100:.2f}%")
 c3.metric("Até D+2",f"{p2/total*100:.2f}%")
 c4.metric("Até D+3",f"{p3/total*100:.2f}%")
 
-# =============================
-# VISÃO DIÁRIA
-# =============================
+# =====================================
+# AGRUPAMENTO
+# =====================================
 
-res=base.groupby("Data NF").agg(
-D0=("D0","sum"),
-D1=("D1","sum"),
-D2=("D2","sum"),
-D3=("D3","sum"),
-Pedidos=("Pedido","count")
-).reset_index()
+if aba=="Visão Diária":
 
-res["Até D+0"]=res["D0"]/res["Pedidos"]*100
-res["Até D+1"]=(res["D0"]+res["D1"])/res["Pedidos"]*100
-res["Até D+2"]=(res["D0"]+res["D1"]+res["D2"])/res["Pedidos"]*100
+    res=base.groupby("Data NF").agg(
+    D0=("D0","sum"),
+    D1=("D1","sum"),
+    D2=("D2","sum"),
+    Pedidos=("Pedido","count")
+    ).reset_index()
 
-res["Dia"]=res["Data NF"].dt.strftime("%d/%m")
+    res["Até D+0"]=res["D0"]/res["Pedidos"]*100
+    res["Até D+1"]=(res["D0"]+res["D1"])/res["Pedidos"]*100
+    res["Até D+2"]=(res["D0"]+res["D1"]+res["D2"])/res["Pedidos"]*100
 
-fig=px.line(res,x="Dia",y=["Até D+0","Até D+1","Até D+2"],markers=True)
+    res["Periodo"]=res["Data NF"].dt.strftime("%d/%m")
+
+else:
+
+    res=base.groupby("Mes_Ano").agg(
+    D0=("D0","sum"),
+    D1=("D1","sum"),
+    D2=("D2","sum"),
+    Pedidos=("Pedido","count")
+    ).reset_index()
+
+    res["Até D+0"]=res["D0"]/res["Pedidos"]*100
+    res["Até D+1"]=(res["D0"]+res["D1"])/res["Pedidos"]*100
+    res["Até D+2"]=(res["D0"]+res["D1"]+res["D2"])/res["Pedidos"]*100
+
+    res["Periodo"]=res["Mes_Ano"]
+
+# =====================================
+# META
+# =====================================
+
+meta=obter_meta(mes,base["Empresa"].iloc[0]) if len(base)>0 else 85
+
+# =====================================
+# GRÁFICO
+# =====================================
+
+fig=px.line(
+res,
+x="Periodo",
+y=["Até D+0","Até D+1","Até D+2"],
+markers=True
+)
+
+fig.add_hline(
+y=meta,
+line_dash="dash",
+annotation_text=f"Meta {meta:.2f}%"
+)
 
 st.plotly_chart(fig,use_container_width=True)
 
-# =============================
+# =====================================
+# TABELA
+# =====================================
+
+st.subheader("Tabela SLA")
+
+tabela=res[["Periodo","Até D+0","Até D+1","Até D+2","Pedidos"]]
+
+st.dataframe(
+tabela.style.format({
+"Até D+0":"{:.2f}%",
+"Até D+1":"{:.2f}%",
+"Até D+2":"{:.2f}%"
+}),
+use_container_width=True
+)
+
+# =====================================
 # RANKING CD
-# =============================
+# =====================================
 
 st.subheader("Ranking CD Origem (SLA D+1)")
 
