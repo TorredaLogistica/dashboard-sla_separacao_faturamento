@@ -43,7 +43,7 @@ st.title("Dashboard SLA Separação e Faturamento")
 st.caption(f"Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}")
 
 # =============================
-# METAS (AS QUE VOCÊ ENVIOU)
+# METAS
 # =============================
 
 METAS_CLARO_BRASIL = {
@@ -83,7 +83,7 @@ METAS_CLARO_MOVEL = {
 
 def obter_meta(mes, empresa):
 
-    empresa=str(empresa).upper()
+    empresa = str(empresa).upper()
 
     if "NET" in empresa:
         return METAS_NET.get(mes)
@@ -110,13 +110,7 @@ def load_data():
 
     df=pd.read_excel(arquivo,engine="pyxlsb")
 
-    if pd.api.types.is_numeric_dtype(df["Data NF"]):
-
-        df["Data NF"]=pd.to_datetime("1899-12-30")+pd.to_timedelta(df["Data NF"],unit="D")
-
-    else:
-
-        df["Data NF"]=pd.to_datetime(df["Data NF"],errors="coerce")
+    df["Data NF"]=pd.to_datetime(df["Data NF"],errors="coerce")
 
     df["Mes_Ano"]=df["Data NF"].dt.strftime("%m/%Y")
 
@@ -140,7 +134,7 @@ with st.sidebar:
 
     aba=st.radio("Visualização",["Visão Diária","Evolução Mensal"])
 
-    meses=sorted(df["Mes_Ano"].unique(),reverse=True)
+    meses=sorted(df["Mes_Ano"].dropna().unique(),reverse=True)
 
     mes=st.selectbox("Mês",meses)
 
@@ -158,7 +152,7 @@ if aba=="Visão Diária":
 
 else:
 
-    meses_ord=sorted(df["Mes_Ano"].unique())
+    meses_ord=sorted(df["Mes_Ano"].dropna().unique())
 
     meses_periodo=meses_ord[-periodo:]
 
@@ -199,13 +193,31 @@ empresa=base["Empresa"].iloc[0] if len(base)>0 else ""
 res["Meta"]=res["Periodo"].apply(lambda x:obter_meta(x if aba!="Visão Diária" else mes,empresa))
 
 # =============================
+# KPIs
+# =============================
+
+kpi_d0=res["Até D+0"].mean()
+kpi_d1=res["Até D+1"].mean()
+kpi_d2=res["Até D+2"].mean()
+
+meta_kpi=obter_meta(mes,empresa)
+
+c1,c2,c3,c4=st.columns(4)
+
+c1.metric("SLA D+0",f"{kpi_d0:.2f}%")
+c2.metric("SLA D+1",f"{kpi_d1:.2f}%")
+c3.metric("SLA D+2",f"{kpi_d2:.2f}%")
+c4.metric("Meta",f"{meta_kpi:.2f}%")
+
+# =============================
 # GRÁFICO
 # =============================
 
 fig=go.Figure()
 
-fig.add_scatter(x=res["Periodo"],y=res["Até D+1"],mode="lines+markers",name="SLA D+1")
-
+fig.add_scatter(x=res["Periodo"],y=res["Até D+0"],mode="lines+markers",name="D+0")
+fig.add_scatter(x=res["Periodo"],y=res["Até D+1"],mode="lines+markers",name="D+1")
+fig.add_scatter(x=res["Periodo"],y=res["Até D+2"],mode="lines+markers",name="D+2")
 fig.add_scatter(x=res["Periodo"],y=res["Meta"],mode="lines",name="Meta",line=dict(dash="dash"))
 
 st.plotly_chart(fig,use_container_width=True)
@@ -223,5 +235,26 @@ tabela.style.format({
 "Até D+1":"{:.2f}%",
 "Até D+2":"{:.2f}%"
 }),
+use_container_width=True
+)
+
+# =============================
+# RANKING CD
+# =============================
+
+ranking=base.groupby("CD").agg(
+Pedidos=("Pedido","count"),
+D0=("D0","sum"),
+D1=("D1","sum")
+)
+
+ranking["SLA D+1"]=(ranking["D0"]+ranking["D1"])/ranking["Pedidos"]*100
+
+ranking=ranking.sort_values("SLA D+1",ascending=False)
+
+st.subheader("Ranking CDs")
+
+st.dataframe(
+ranking.style.format({"SLA D+1":"{:.2f}%"}),
 use_container_width=True
 )
