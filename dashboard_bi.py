@@ -22,7 +22,6 @@ def check_password():
     if "password_correct" not in st.session_state:
         st.text_input("Senha", type="password", on_change=password_entered, key="password")
         st.stop()
-
     if not st.session_state["password_correct"]:
         st.text_input("Senha", type="password", on_change=password_entered, key="password")
         st.error("Senha incorreta")
@@ -35,7 +34,6 @@ check_password()
 # =============================
 brasil = pytz.timezone("America/Sao_Paulo")
 agora = datetime.now(brasil)
-
 st.title("Dashboard SLA Separação e Faturamento")
 st.caption(f"Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}")
 
@@ -67,15 +65,11 @@ METAS = {
 
 def obter_meta(mes, empresa):
     empresa = str(empresa).upper()
-    if "NET" in empresa:
-        return METAS["NET"].get(mes, 0)
-    if "TV" in empresa:
-        return METAS["CLARO_TV"].get(mes, 0)
-    if "EMBRATEL" in empresa:
-        return METAS["EMBRATEL"].get(mes, 0)
-    if "MOVEL" in empresa:
-        return METAS["CLARO_MOVEL"].get(mes, 0)
-    return METAS["CLARO_BRASIL"].get(mes, 0)
+    if "NET" in empresa: return METAS["NET"].get(mes,0)
+    if "TV" in empresa: return METAS["CLARO_TV"].get(mes,0)
+    if "EMBRATEL" in empresa: return METAS["EMBRATEL"].get(mes,0)
+    if "MOVEL" in empresa: return METAS["CLARO_MOVEL"].get(mes,0)
+    return METAS["CLARO_BRASIL"].get(mes,0)
 
 # =============================
 # LEITURA XLSB
@@ -87,22 +81,27 @@ def load_data():
         st.error("Nenhum arquivo .xlsb encontrado na pasta.")
         st.stop()
     arquivo = arquivo[0]
-
     df = pd.read_excel(arquivo, engine="pyxlsb")
     
-    # Conversão segura de datas
-    df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
-    df = df[df["Data NF"].notna()]  # remove linhas inválidas
+    # Verifica colunas essenciais
+    for col in ["Data NF","Aging_Ajustado_D+","Pedido","Empresa","CD"]:
+        if col not in df.columns:
+            df[col] = np.nan
 
+    # Converter Data NF corretamente
+    def parse_date(x):
+        try: return pd.to_datetime(x)
+        except: return pd.NaT
+    df["Data NF"] = df["Data NF"].apply(parse_date)
+    df = df[df["Data NF"].notna()]
     df["Mes_Ano"] = df["Data NF"].dt.strftime("%m/%Y")
 
-    # Criar D0, D1, D2
+    # D0, D1, D2
     df["Aging_Ajustado_D+"] = df["Aging_Ajustado_D+"].astype(str)
     aging_num = df["Aging_Ajustado_D+"].str.extract(r'(\d+)').astype(float)
     df["D0"] = aging_num[0] == 0
     df["D1"] = aging_num[0] == 1
     df["D2"] = aging_num[0] == 2
-
     return df
 
 df = load_data()
@@ -111,26 +110,28 @@ df = load_data()
 # FILTROS
 # =============================
 with st.sidebar:
-    aba = st.radio("Visualização", ["Visão Diária", "Evolução Mensal"])
+    aba = st.radio("Visualização", ["Visão Diária","Evolução Mensal"])
     meses = sorted(df["Mes_Ano"].dropna().unique(), reverse=True)
     mes = st.selectbox("Mês", meses)
-    if aba == "Evolução Mensal":
-        periodo = st.selectbox("Meses acumulados", [3,6,9,12,24], index=3)
+    if aba=="Evolução Mensal":
+        periodo = st.selectbox("Meses acumulados",[3,6,9,12,24],index=3)
 
 # =============================
 # BASE
 # =============================
-if aba == "Visão Diária":
-    base = df[df["Mes_Ano"] == mes]
+if aba=="Visão Diária":
+    base = df[df["Mes_Ano"]==mes].copy()
 else:
     meses_ord = sorted(df["Mes_Ano"].dropna().unique())
     meses_periodo = meses_ord[-periodo:]
-    base = df[df["Mes_Ano"].isin(meses_periodo)]
+    base = df[df["Mes_Ano"].isin(meses_periodo)].copy()
+
+empresa = base["Empresa"].iloc[0] if len(base)>0 else ""
 
 # =============================
 # AGRUPAMENTO
 # =============================
-if aba == "Visão Diária":
+if aba=="Visão Diária":
     res = base.groupby("Data NF").agg(
         D0=("D0","sum"),
         D1=("D1","sum"),
@@ -147,12 +148,10 @@ else:
     ).reset_index()
     res["Periodo"] = res["Mes_Ano"]
 
-res["Até D+0"] = res["D0"] / res["Pedidos"] * 100
-res["Até D+1"] = (res["D0"] + res["D1"]) / res["Pedidos"] * 100
-res["Até D+2"] = (res["D0"] + res["D1"] + res["D2"]) / res["Pedidos"] * 100
-
-empresa = base["Empresa"].iloc[0] if len(base) > 0 else ""
-res["Meta"] = res["Periodo"].apply(lambda x: obter_meta(x if aba != "Visão Diária" else mes, empresa))
+res["Até D+0"] = res["D0"]/res["Pedidos"]*100
+res["Até D+1"] = (res["D0"]+res["D1"])/res["Pedidos"]*100
+res["Até D+2"] = (res["D0"]+res["D1"]+res["D2"])/res["Pedidos"]*100
+res["Meta"] = res["Periodo"].apply(lambda x: obter_meta(x if aba!="Visão Diária" else mes,empresa))
 
 # =============================
 # KPIs
@@ -160,24 +159,33 @@ res["Meta"] = res["Periodo"].apply(lambda x: obter_meta(x if aba != "Visão Diá
 kpi_d0 = res["Até D+0"].mean()
 kpi_d1 = res["Até D+1"].mean()
 kpi_d2 = res["Até D+2"].mean()
-meta_kpi = obter_meta(mes, empresa)
+meta_kpi = obter_meta(mes,empresa)
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("SLA D+0", f"{kpi_d0:.2f}%")
-c2.metric("SLA D+1", f"{kpi_d1:.2f}%")
-c3.metric("SLA D+2", f"{kpi_d2:.2f}%")
-c4.metric("Meta", f"{meta_kpi:.2f}%")
+c1,c2,c3,c4 = st.columns(4)
+c1.metric("SLA D+0",f"{kpi_d0:.2f}%")
+c2.metric("SLA D+1",f"{kpi_d1:.2f}%")
+c3.metric("SLA D+2",f"{kpi_d2:.2f}%")
+c4.metric("Meta",f"{meta_kpi:.2f}%")
 
 # =============================
-# GRÁFICO
+# GRÁFICOS
 # =============================
 fig = go.Figure()
+# Linha SLA
 fig.add_scatter(x=res["Periodo"], y=res["Até D+0"], mode="lines+markers", name="D+0")
 fig.add_scatter(x=res["Periodo"], y=res["Até D+1"], mode="lines+markers", name="D+1")
 fig.add_scatter(x=res["Periodo"], y=res["Até D+2"], mode="lines+markers", name="D+2")
 fig.add_scatter(x=res["Periodo"], y=res["Meta"], mode="lines", name="Meta", line=dict(dash="dash"))
 
-st.plotly_chart(fig, use_container_width=True)
+# Barra Volume
+fig.add_bar(x=res["Periodo"], y=res["Pedidos"], name="Volume", opacity=0.4, yaxis="y2")
+
+fig.update_layout(
+    yaxis=dict(title="SLA (%)", range=[0,100]),
+    yaxis2=dict(title="Volume", overlaying="y", side="right"),
+    barmode="overlay"
+)
+st.plotly_chart(fig,use_container_width=True)
 
 # =============================
 # TABELA
@@ -196,13 +204,15 @@ st.dataframe(
 # =============================
 # RANKING CD
 # =============================
-ranking = base.groupby("CD").agg(
-    Pedidos=("Pedido","count"),
-    D0=("D0","sum"),
-    D1=("D1","sum")
-)
-ranking["SLA D+1"] = (ranking["D0"] + ranking["D1"]) / ranking["Pedidos"] * 100
-ranking = ranking.sort_values("SLA D+1", ascending=False)
-
-st.subheader("Ranking CDs")
-st.dataframe(ranking.style.format({"SLA D+1":"{:.2f}%"}), use_container_width=True)
+if "CD" in base.columns:
+    ranking = base.groupby("CD").agg(
+        Pedidos=("Pedido","count"),
+        D0=("D0","sum"),
+        D1=("D1","sum")
+    ).reset_index()
+    ranking["SLA D+1"] = (ranking["D0"]+ranking["D1"])/ranking["Pedidos"]*100
+    ranking = ranking.sort_values("SLA D+1", ascending=False)
+    st.subheader("Ranking CDs")
+    st.dataframe(ranking.style.format({"SLA D+1":"{:.2f}%"}), use_container_width=True)
+else:
+    st.warning("Coluna 'CD' não encontrada. Ranking CD não pode ser exibido.")
