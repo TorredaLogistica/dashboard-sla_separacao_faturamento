@@ -103,7 +103,7 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 @st.cache_data
 def load_data():
 
-    arquivos = [f for f in os.listdir() if f.lower().endswith((".xlsx", ".xls",".xlsb" ))]
+    arquivos = [f for f in os.listdir() if f.lower().endswith((".xlsx", ".xls",".xlsb"))]
 
     if len(arquivos) == 0:
         st.error("Nenhum arquivo Excel encontrado no repositório.")
