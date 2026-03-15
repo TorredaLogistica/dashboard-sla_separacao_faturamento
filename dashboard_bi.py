@@ -1,16 +1,16 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime
 import pytz
 import os
 
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
-# =====================================
+# =============================
 # LOGIN
-# =====================================
+# =============================
 
 def check_password():
 
@@ -22,20 +22,19 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.title("🔒 Acesso Restrito")
-        st.text_input("Digite a senha", type="password", on_change=password_entered, key="password")
+        st.text_input("Senha", type="password", on_change=password_entered, key="password")
         st.stop()
 
     if not st.session_state["password_correct"]:
-        st.text_input("Digite a senha", type="password", on_change=password_entered, key="password")
+        st.text_input("Senha", type="password", on_change=password_entered, key="password")
         st.error("Senha incorreta")
         st.stop()
 
 check_password()
 
-# =====================================
+# =============================
 # HORA BRASIL
-# =====================================
+# =============================
 
 brasil = pytz.timezone("America/Sao_Paulo")
 agora = datetime.now(brasil)
@@ -43,60 +42,73 @@ agora = datetime.now(brasil)
 st.title("Dashboard SLA Separação e Faturamento")
 st.caption(f"Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}")
 
-# =====================================
-# METAS
-# =====================================
+# =============================
+# METAS (AS QUE VOCÊ ENVIOU)
+# =============================
 
 METAS_CLARO_BRASIL = {
-"01/2025":76.09,"02/2025":74.38,"03/2025":79.52,"04/2025":72.28,
-"05/2025":81.73,"06/2025":88.07,"07/2025":82.91,"08/2025":89.19,
-"09/2025":92.77,"10/2025":88.68,"11/2025":82.47,"12/2025":85.94,
-"01/2026":94.45,"02/2026":94.65,"03/2026":94.63,"04/2026":94.93
+"01/2025":76.09,"02/2025":74.38,"03/2025":79.52,"04/2025":72.28,"05/2025":81.73,"06/2025":88.07,
+"07/2025":82.91,"08/2025":89.19,"09/2025":92.77,"10/2025":88.68,"11/2025":82.47,"12/2025":85.94,
+"01/2026":94.45,"02/2026":94.65,"03/2026":94.63,"04/2026":94.93,"05/2026":94.31,"06/2026":94.21,
+"07/2026":94.36,"08/2026":95.80,"09/2026":95.36,"10/2026":95.47,"11/2026":95.56,"12/2026":95.47
 }
 
-METAS_NET = {"01/2026":90,"02/2026":90,"03/2026":90}
-METAS_CLARO_TV = {"01/2026":85.02,"02/2026":85.11,"03/2026":85.19}
-METAS_EMBRATEL = {"01/2026":80,"02/2026":80,"03/2026":80}
-METAS_CLARO_MOVEL = {"01/2026":99.5,"02/2026":99.5,"03/2026":99.5}
+METAS_NET = {
+"01/2025":54.98,"02/2025":47.34,"03/2025":55.80,"04/2025":36.50,"05/2025":57.16,"06/2025":73.98,
+"07/2025":67.22,"08/2025":76.42,"09/2025":85.52,"10/2025":75.33,"11/2025":65.79,"12/2025":70.59,
+"01/2026":90,"02/2026":90,"03/2026":90,"04/2026":90,"05/2026":90,"06/2026":90,
+"07/2026":90,"08/2026":92,"09/2026":92,"10/2026":92,"11/2026":92,"12/2026":92
+}
+
+METAS_CLARO_TV = {
+"01/2025":26.91,"02/2025":31.21,"03/2025":58.02,"04/2025":38.19,"05/2025":54.97,"06/2025":78.13,
+"07/2025":82.01,"08/2025":73.10,"09/2025":66.67,"10/2025":64.25,"11/2025":63.69,"12/2025":48.48,
+"01/2026":85.02,"02/2026":85.11,"03/2026":85.19,"04/2026":85.04,"05/2026":84.80,"06/2026":84.90,
+"07/2026":85.19,"08/2026":84.77,"09/2026":84.97,"10/2026":84.97,"11/2026":85.05,"12/2026":84.97
+}
+
+METAS_EMBRATEL = {
+"01/2025":43.25,"02/2025":40.31,"03/2025":51.70,"04/2025":27.42,"05/2025":65.94,"06/2025":73.60,
+"07/2025":55.06,"08/2025":69.74,"09/2025":82.46,"10/2025":64.27,"11/2025":41.33,"12/2025":67.61,
+"01/2026":80,"02/2026":80,"03/2026":80.01,"04/2026":80.02,"05/2026":80.01,"06/2026":79.99,
+"07/2026":79.99,"08/2026":82,"09/2026":81.98,"10/2026":82.01,"11/2026":82,"12/2026":82
+}
+
+METAS_CLARO_MOVEL = {
+"01/2025":97.94,"02/2025":98.17,"03/2025":98.22,"04/2025":97.46,"05/2025":98.39,"06/2025":98.21,
+"07/2025":99.05,"08/2025":98.75,"09/2025":98.73,"10/2025":99.46,"11/2025":96.98,"12/2025":98.28,
+"01/2026":99.50,"02/2026":99.50,"03/2026":99.50,"04/2026":99.50,"05/2026":99.50,"06/2026":99.50,
+"07/2026":99.50,"08/2026":99.50,"09/2026":99.50,"10/2026":99.50,"11/2026":99.50,"12/2026":99.50
+}
 
 def obter_meta(mes, empresa):
 
     empresa=str(empresa).upper()
 
     if "NET" in empresa:
-        return METAS_NET.get(mes,85)
+        return METAS_NET.get(mes)
 
     if "TV" in empresa:
-        return METAS_CLARO_TV.get(mes,85)
+        return METAS_CLARO_TV.get(mes)
 
     if "EMBRATEL" in empresa:
-        return METAS_EMBRATEL.get(mes,85)
+        return METAS_EMBRATEL.get(mes)
 
     if "MOVEL" in empresa:
-        return METAS_CLARO_MOVEL.get(mes,85)
+        return METAS_CLARO_MOVEL.get(mes)
 
-    return METAS_CLARO_BRASIL.get(mes,85)
+    return METAS_CLARO_BRASIL.get(mes)
 
-# =====================================
+# =============================
 # LEITURA XLSB
-# =====================================
+# =============================
 
 @st.cache_data
 def load_data():
 
-    arquivos=[f for f in os.listdir() if f.lower().endswith(".xlsb")]
-
-    if len(arquivos)==0:
-        st.error("Arquivo XLSB não encontrado")
-        st.stop()
-
-    arquivo=arquivos[0]
+    arquivo=[f for f in os.listdir() if f.endswith(".xlsb")][0]
 
     df=pd.read_excel(arquivo,engine="pyxlsb")
-
-    df.columns=df.columns.str.strip()
-
-    # corrigir datas
 
     if pd.api.types.is_numeric_dtype(df["Data NF"]):
 
@@ -106,39 +118,29 @@ def load_data():
 
         df["Data NF"]=pd.to_datetime(df["Data NF"],errors="coerce")
 
-    df=df.dropna(subset=["Data NF"])
-
     df["Mes_Ano"]=df["Data NF"].dt.strftime("%m/%Y")
 
-    df["Mes_Ano_dt"]=pd.to_datetime(df["Mes_Ano"],format="%m/%Y")
-
-    # SLA
-
-    aging=df["Aging_Ajustado_D+"].astype(str).str.upper().str.strip()
+    aging=df["Aging_Ajustado_D+"].astype(str)
 
     aging_num=aging.str.extract(r'(\d+)').astype(float)
 
     df["D0"]=aging_num[0]==0
     df["D1"]=aging_num[0]==1
     df["D2"]=aging_num[0]==2
-    df["D3"]=aging_num[0]==3
 
     return df
 
 df=load_data()
 
-# =====================================
-# SIDEBAR
-# =====================================
+# =============================
+# FILTROS
+# =============================
 
 with st.sidebar:
 
-    if os.path.exists("logo_claro.png"):
-        st.image("logo_claro.png")
-
     aba=st.radio("Visualização",["Visão Diária","Evolução Mensal"])
 
-    meses=df.sort_values("Mes_Ano_dt",ascending=False)["Mes_Ano"].unique()
+    meses=sorted(df["Mes_Ano"].unique(),reverse=True)
 
     mes=st.selectbox("Mês",meses)
 
@@ -146,25 +148,9 @@ with st.sidebar:
 
         periodo=st.selectbox("Meses acumulados",[3,6,9,12,24],index=3)
 
-    filtros=["Operador","CD Origem","Empresa","Canal","Unidade de Negocio","Canal de Atuacao"]
-
-    mask=np.ones(len(df),dtype=bool)
-
-    for col in filtros:
-
-        if col in df.columns:
-
-            valores=st.multiselect(col,sorted(df[col].dropna().unique()))
-
-            if valores:
-
-                mask &= df[col].isin(valores)
-
-df=df[mask]
-
-# =====================================
+# =============================
 # BASE
-# =====================================
+# =============================
 
 if aba=="Visão Diária":
 
@@ -172,33 +158,15 @@ if aba=="Visão Diária":
 
 else:
 
-    meses=df.sort_values("Mes_Ano_dt")["Mes_Ano"].unique()
+    meses_ord=sorted(df["Mes_Ano"].unique())
 
-    meses_periodo=meses[-periodo:]
+    meses_periodo=meses_ord[-periodo:]
 
     base=df[df["Mes_Ano"].isin(meses_periodo)]
 
-# =====================================
-# KPIs
-# =====================================
-
-total=len(base)
-
-p0=base["D0"].sum()
-p1=(base["D0"]|base["D1"]).sum()
-p2=(base["D0"]|base["D1"]|base["D2"]).sum()
-p3=(base["D0"]|base["D1"]|base["D2"]|base["D3"]).sum()
-
-c1,c2,c3,c4=st.columns(4)
-
-c1.metric("Até D+0",f"{p0/total*100:.2f}%")
-c2.metric("Até D+1",f"{p1/total*100:.2f}%")
-c3.metric("Até D+2",f"{p2/total*100:.2f}%")
-c4.metric("Até D+3",f"{p3/total*100:.2f}%")
-
-# =====================================
+# =============================
 # AGRUPAMENTO
-# =====================================
+# =============================
 
 if aba=="Visão Diária":
 
@@ -208,10 +176,6 @@ if aba=="Visão Diária":
     D2=("D2","sum"),
     Pedidos=("Pedido","count")
     ).reset_index()
-
-    res["Até D+0"]=res["D0"]/res["Pedidos"]*100
-    res["Até D+1"]=(res["D0"]+res["D1"])/res["Pedidos"]*100
-    res["Até D+2"]=(res["D0"]+res["D1"]+res["D2"])/res["Pedidos"]*100
 
     res["Periodo"]=res["Data NF"].dt.strftime("%d/%m")
 
@@ -224,77 +188,40 @@ else:
     Pedidos=("Pedido","count")
     ).reset_index()
 
-    res["Até D+0"]=res["D0"]/res["Pedidos"]*100
-    res["Até D+1"]=(res["D0"]+res["D1"])/res["Pedidos"]*100
-    res["Até D+2"]=(res["D0"]+res["D1"]+res["D2"])/res["Pedidos"]*100
-
     res["Periodo"]=res["Mes_Ano"]
 
-# =====================================
-# META
-# =====================================
+res["Até D+0"]=res["D0"]/res["Pedidos"]*100
+res["Até D+1"]=(res["D0"]+res["D1"])/res["Pedidos"]*100
+res["Até D+2"]=(res["D0"]+res["D1"]+res["D2"])/res["Pedidos"]*100
 
-meta=obter_meta(mes,base["Empresa"].iloc[0]) if len(base)>0 else 85
+empresa=base["Empresa"].iloc[0] if len(base)>0 else ""
 
-# =====================================
+res["Meta"]=res["Periodo"].apply(lambda x:obter_meta(x if aba!="Visão Diária" else mes,empresa))
+
+# =============================
 # GRÁFICO
-# =====================================
+# =============================
 
-fig=px.line(
-res,
-x="Periodo",
-y=["Até D+0","Até D+1","Até D+2"],
-markers=True
-)
+fig=go.Figure()
 
-fig.add_hline(
-y=meta,
-line_dash="dash",
-annotation_text=f"Meta {meta:.2f}%"
-)
+fig.add_scatter(x=res["Periodo"],y=res["Até D+1"],mode="lines+markers",name="SLA D+1")
+
+fig.add_scatter(x=res["Periodo"],y=res["Meta"],mode="lines",name="Meta",line=dict(dash="dash"))
 
 st.plotly_chart(fig,use_container_width=True)
 
-# =====================================
+# =============================
 # TABELA
-# =====================================
+# =============================
 
-st.subheader("Tabela SLA")
-
-tabela=res[["Periodo","Até D+0","Até D+1","Até D+2","Pedidos"]]
+tabela=res[["Periodo","Meta","Até D+0","Até D+1","Até D+2","Pedidos"]]
 
 st.dataframe(
 tabela.style.format({
+"Meta":"{:.2f}%",
 "Até D+0":"{:.2f}%",
 "Até D+1":"{:.2f}%",
 "Até D+2":"{:.2f}%"
 }),
 use_container_width=True
 )
-
-# =====================================
-# RANKING CD
-# =====================================
-
-st.subheader("Ranking CD Origem (SLA D+1)")
-
-rank=base.groupby("CD Origem").agg(
-D0=("D0","sum"),
-D1=("D1","sum"),
-Pedidos=("Pedido","count")
-).reset_index()
-
-rank["SLA"]=(rank["D0"]+rank["D1"])/rank["Pedidos"]*100
-
-rank=rank.sort_values("SLA")
-
-fig2=px.bar(
-rank,
-x="CD Origem",
-y="SLA",
-text=rank["SLA"].apply(lambda x:f"{x:.2f}%"),
-color="SLA",
-color_continuous_scale=["red","yellow","green"]
-)
-
-st.plotly_chart(fig2,use_container_width=True)
