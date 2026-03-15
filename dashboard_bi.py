@@ -39,7 +39,7 @@ st.caption(f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 # =============================
 # METAS
 # =============================
-# ... Mesma definição de METAS_CLARO_BRASIL, METAS_NET, etc. do seu código original ...
+# (Mesmos dicionários METAS_CLARO_BRASIL, METAS_NET, METAS_CLARO_TV, METAS_EMBRATEL, METAS_CLARO_MOVEL)
 
 # =============================
 # FUNÇÕES AUXILIARES
@@ -69,19 +69,15 @@ def load_data_xlsb(path):
     df = pd.read_excel(path, engine='pyxlsb')
     df.columns = df.columns.str.strip()
     
-    # Garante colunas essenciais
     for col in ['Data NF','Aging_Ajustado_D+','Pedido','Empresa','CD Origem']:
         if col not in df.columns: df[col] = np.nan
     
-    # Converte datas corretamente (numéricas ou datetime)
     df['Data NF'] = pd.to_datetime(df['Data NF'], errors='coerce')
     
-    # Flags
     df['flag_d0'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+0', regex=True)
     df['flag_d1'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+1', regex=True)
     df['flag_d2'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+2', regex=True)
     
-    # Mês/Ano
     df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
     return df
 
@@ -89,22 +85,29 @@ caminho_arquivo = os.path.join(os.getcwd(), "Faturamento SLA 2026.xlsb")
 df = load_data_xlsb(caminho_arquivo)
 
 # =============================
-# SIDEBAR
+# SIDEBAR COMPLETA
 # =============================
 with st.sidebar:
-    st.image("logo_claro.png", use_container_width=True) if os.path.exists("logo_claro.png") else st.markdown("<h2 style='text-align: center; color: #e1261c;'>CLARO</h2>", unsafe_allow_html=True)
+    if os.path.exists("logo_claro.png"):
+        st.image("logo_claro.png", use_container_width=True)
+    else:
+        st.markdown("<h2 style='text-align: center; color: #e1261c;'>CLARO</h2>", unsafe_allow_html=True)
+    
     aba = st.radio("Visualização", ["📅 Visão Diária","📊 Evolução Mensal"], horizontal=True)
+    
     lista_meses = sorted(df['Mes_Ano'].dropna().unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
     mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
     
     filtros = ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']
     mask = np.ones(len(df), dtype=bool)
     filtros_selecionados = {}
+    
     for col in filtros:
         if col in df.columns:
             vals = st.multiselect(col, sorted(df[col].dropna().unique()))
             filtros_selecionados[col] = vals
-            if vals: mask &= df[col].isin(vals)
+            if vals:
+                mask &= df[col].isin(vals)
 
 dff_global = df[mask].copy()
 empresas_filtradas = filtros_selecionados.get('Empresa', [])
@@ -130,7 +133,7 @@ if total > 0:
     c2.metric("Até D+1", f"{p1/total*100:.2f}%")
     c3.metric("Até D+2", f"{p2/total*100:.2f}%")
     c4.metric("Total Pedidos", f"{total:,}")
-
+    
     valor_meta = obter_meta_dinamica(mes_selecionado, empresas_filtradas)
     st.info(f"💡 Regra de Meta Aplicada: {empresas_filtradas[0] if empresas_filtradas else 'Claro Brasil'} - {valor_meta:.2f}%")
 
