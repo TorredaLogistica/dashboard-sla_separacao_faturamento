@@ -115,6 +115,10 @@ def load_data():
 
     df.columns = df.columns.str.strip()
 
+   # Corrigir datas vindas de XLSB
+if pd.api.types.is_numeric_dtype(df["Data NF"]):
+    df["Data NF"] = pd.to_datetime("1899-12-30") + pd.to_timedelta(df["Data NF"], "D")
+else:
     df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
 
     df = df.dropna(subset=["Data NF"])
