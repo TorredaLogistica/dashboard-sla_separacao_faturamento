@@ -103,37 +103,72 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 @st.cache_data
 def load_data():
 
-    arquivos = [f for f in os.listdir() if f.lower().endswith((".xlsx", ".xls", ".xlsb"))]
+    # localizar automaticamente arquivo Excel no repositório
+    arquivos = [f for f in os.listdir() if f.lower().endswith((".xlsx",".xls",".xlsb"))]
 
-    if len(arquivos) == 0:
+    if not arquivos:
         st.error("Nenhum arquivo Excel encontrado no repositório.")
         st.stop()
 
     arquivo = arquivos[0]
 
-    df = pd.read_excel(arquivo, engine="pyxlsb")
+    # escolher engine correta
+    if arquivo.lower().endswith(".xlsb"):
+        df = pd.read_excel(arquivo, engine="pyxlsb")
+    else:
+        df = pd.read_excel(arquivo)
 
+    # limpar nomes das colunas
     df.columns = df.columns.str.strip()
 
-   # Corrigir datas vindas de XLSB
-if pd.api.types.is_numeric_dtype(df["Data NF"]):
-    df["Data NF"] = pd.to_datetime("1899-12-30") + pd.to_timedelta(df["Data NF"], "D")
-else:
-    df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
+    # =============================
+    # CORRIGIR DATA
+    # =============================
+
+    if "Data NF" not in df.columns:
+        st.error("Coluna 'Data NF' não encontrada no arquivo.")
+        st.stop()
+
+    # se vier como número (xlsb)
+    if pd.api.types.is_numeric_dtype(df["Data NF"]):
+
+        df["Data NF"] = pd.to_datetime("1899-12-30") + pd.to_timedelta(df["Data NF"], "D")
+
+    else:
+
+        df["Data NF"] = pd.to_datetime(df["Data NF"], errors="coerce")
 
     df = df.dropna(subset=["Data NF"])
 
+    # =============================
+    # CRIAR MÊS ANO
+    # =============================
+
     df["Mes_Ano"] = df["Data NF"].dt.strftime("%m/%Y")
 
-    aging = df["Aging_Ajustado_D+"].astype(str)
+    # =============================
+    # LIMPAR AGING
+    # =============================
 
-    df["flag_d0"] = aging.str.contains("D\+0", regex=True)
-    df["flag_d1"] = aging.str.contains("D\+1", regex=True)
-    df["flag_d2"] = aging.str.contains("D\+2", regex=True)
+    if "Aging_Ajustado_D+" not in df.columns:
+        st.error("Coluna Aging_Ajustado_D+ não encontrada.")
+        st.stop()
+
+    aging = df["Aging_Ajustado_D+"].astype(str).str.upper().str.strip()
+
+    df["flag_d0"] = aging.str.contains("D+0", regex=False)
+    df["flag_d1"] = aging.str.contains("D+1", regex=False)
+    df["flag_d2"] = aging.str.contains("D+2", regex=False)
+
+    # =============================
+    # GARANTIR COLUNA PEDIDO
+    # =============================
+
+    if "Pedido" not in df.columns:
+
+        df["Pedido"] = 1
 
     return df
-
-df = load_data()
 
 # =============================
 # SIDEBAR
