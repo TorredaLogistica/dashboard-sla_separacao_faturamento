@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
+import pytz
 import os
 
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
@@ -34,17 +34,22 @@ def check_password():
 check_password()
 
 # =============================
-# CABEÇALHO
+# HORA BRASIL
 # =============================
 
+brasil = pytz.timezone("America/Sao_Paulo")
+agora = datetime.now(brasil)
+
 st.title("Dashboard SLA Separação e Faturamento")
-st.caption(f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+st.caption(f"Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}")
 
 # =============================
 # METAS
 # =============================
 
 METAS_CLARO_BRASIL = {
+"01/2025":76.09,"02/2025":74.38,"03/2025":79.52,"04/2025":72.28,"05/2025":81.73,"06/2025":88.07,
+"07/2025":82.91,"08/2025":89.19,"09/2025":92.77,"10/2025":88.68,"11/2025":82.47,"12/2025":85.94,
 "01/2026":94.45,"02/2026":94.65,"03/2026":94.63,"04/2026":94.93
 }
 
@@ -72,7 +77,7 @@ def obter_meta(mes, empresa):
     return METAS_CLARO_BRASIL.get(mes,85)
 
 # =============================
-# CARGA DE DADOS XLSB
+# LEITURA XLSB
 # =============================
 
 @st.cache_data
@@ -81,7 +86,7 @@ def load_data():
     arquivos=[f for f in os.listdir() if f.lower().endswith(".xlsb")]
 
     if len(arquivos)==0:
-        st.error("Arquivo XLSB não encontrado no repositório")
+        st.error("Arquivo XLSB não encontrado")
         st.stop()
 
     arquivo=arquivos[0]
@@ -90,9 +95,7 @@ def load_data():
 
     df.columns=df.columns.str.strip()
 
-    # =============================
-    # CORRIGIR DATA XLSB
-    # =============================
+    # corrigir data
 
     if pd.api.types.is_numeric_dtype(df["Data NF"]):
 
@@ -108,11 +111,16 @@ def load_data():
 
     df["Mes_Ano_dt"]=pd.to_datetime(df["Mes_Ano"],format="%m/%Y")
 
-    aging=df["Aging_Ajustado_D+"].astype(str)
+    # SLA
 
-    df["flag_d0"]=aging.str.contains("D+0")
-    df["flag_d1"]=aging.str.contains("D+1")
-    df["flag_d2"]=aging.str.contains("D+2")
+    aging=df["Aging_Ajustado_D+"].astype(str).str.upper().str.strip()
+
+    aging_num=aging.str.extract(r'(\d+)').astype(float)
+
+    df["D0"]=aging_num[0]==0
+    df["D1"]=aging_num[0]==1
+    df["D2"]=aging_num[0]==2
+    df["D3"]=aging_num[0]==3
 
     return df
 
@@ -125,15 +133,13 @@ df=load_data()
 with st.sidebar:
 
     if os.path.exists("logo_claro.png"):
-        st.image("logo_claro.png",use_container_width=True)
+        st.image("logo_claro.png")
 
     aba=st.radio("Visualização",["Visão Diária","Evolução Mensal"])
 
-    lista_meses=(
-        df.sort_values("Mes_Ano_dt",ascending=False)["Mes_Ano"].unique()
-    )
+    meses=df.sort_values("Mes_Ano_dt",ascending=False)["Mes_Ano"].unique()
 
-    mes_selecionado=st.selectbox("Mês",lista_meses)
+    mes=st.selectbox("Mês",meses)
 
     filtros=["Operador","CD Origem","Empresa","Canal","Unidade de Negocio","Canal de Atuacao"]
 
@@ -155,83 +161,41 @@ df=df[mask]
 # BASE
 # =============================
 
-if aba=="Visão Diária":
-
-    base=df[df["Mes_Ano"]==mes_selecionado]
-
-else:
-
-    periodo=st.sidebar.radio("Período",[3,6,9,12],index=3)
-
-    meses=df.sort_values("Mes_Ano_dt")["Mes_Ano"].unique()
-
-    base=df[df["Mes_Ano"].isin(meses[-periodo:])]
-
-# =============================
-# KPIs
-# =============================
+base=df[df["Mes_Ano"]==mes]
 
 total=len(base)
 
-p0=base["flag_d0"].sum()
-p1=(base["flag_d0"]|base["flag_d1"]).sum()
-p2=(base["flag_d0"]|base["flag_d1"]|base["flag_d2"]).sum()
+p0=base["D0"].sum()
+p1=(base["D0"]|base["D1"]).sum()
+p2=(base["D0"]|base["D1"]|base["D2"]).sum()
+p3=(base["D0"]|base["D1"]|base["D2"]|base["D3"]).sum()
 
 c1,c2,c3,c4=st.columns(4)
 
 c1.metric("Até D+0",f"{p0/total*100:.2f}%")
 c2.metric("Até D+1",f"{p1/total*100:.2f}%")
 c3.metric("Até D+2",f"{p2/total*100:.2f}%")
-c4.metric("Total Pedidos",f"{total:,}".replace(",","."))
+c4.metric("Até D+3",f"{p3/total*100:.2f}%")
 
 # =============================
-# AGRUPAMENTO
+# VISÃO DIÁRIA
 # =============================
 
-if aba=="Visão Diária":
+res=base.groupby("Data NF").agg(
+D0=("D0","sum"),
+D1=("D1","sum"),
+D2=("D2","sum"),
+D3=("D3","sum"),
+Pedidos=("Pedido","count")
+).reset_index()
 
-    res=base.groupby("Data NF").agg(
-    Pedido=("Pedido","count"),
-    D0=("flag_d0","sum"),
-    D1=("flag_d1","sum"),
-    D2=("flag_d2","sum")
-    ).reset_index()
+res["Até D+0"]=res["D0"]/res["Pedidos"]*100
+res["Até D+1"]=(res["D0"]+res["D1"])/res["Pedidos"]*100
+res["Até D+2"]=(res["D0"]+res["D1"]+res["D2"])/res["Pedidos"]*100
 
-    res["Até D+0"]=res["D0"]/res["Pedido"]*100
-    res["Até D+1"]=(res["D0"]+res["D1"])/res["Pedido"]*100
-    res["Até D+2"]=(res["D0"]+res["D1"]+res["D2"])/res["Pedido"]*100
+res["Dia"]=res["Data NF"].dt.strftime("%d/%m")
 
-    res["Mês"]=res["Data NF"].dt.strftime("%d/%m")
-
-else:
-
-    res=base.groupby("Mes_Ano").agg(
-    Pedido=("Pedido","count"),
-    D0=("flag_d0","sum"),
-    D1=("flag_d1","sum"),
-    D2=("flag_d2","sum")
-    ).reset_index()
-
-    res["Até D+0"]=res["D0"]/res["Pedido"]*100
-    res["Até D+1"]=(res["D0"]+res["D1"])/res["Pedido"]*100
-    res["Até D+2"]=(res["D0"]+res["D1"]+res["D2"])/res["Pedido"]*100
-
-    res["Mês"]=res["Mes_Ano"]
-
-# =============================
-# GRÁFICO
-# =============================
-
-fig=go.Figure()
-
-for col in ["Até D+0","Até D+1","Até D+2"]:
-
-    fig.add_trace(go.Scatter(
-    x=res["Mês"],
-    y=res[col],
-    mode="lines+markers",
-    name=col
-    ))
+fig=px.line(res,x="Dia",y=["Até D+0","Até D+1","Até D+2"],markers=True)
 
 st.plotly_chart(fig,use_container_width=True)
 
@@ -242,16 +206,16 @@ st.plotly_chart(fig,use_container_width=True)
 st.subheader("Ranking CD Origem (SLA D+1)")
 
 rank=base.groupby("CD Origem").agg(
-Pedido=("Pedido","count"),
-D0=("flag_d0","sum"),
-D1=("flag_d1","sum")
+D0=("D0","sum"),
+D1=("D1","sum"),
+Pedidos=("Pedido","count")
 ).reset_index()
 
-rank["SLA"]=(rank["D0"]+rank["D1"])/rank["Pedido"]*100
+rank["SLA"]=(rank["D0"]+rank["D1"])/rank["Pedidos"]*100
 
 rank=rank.sort_values("SLA")
 
-fig_bar=px.bar(
+fig2=px.bar(
 rank,
 x="CD Origem",
 y="SLA",
@@ -260,4 +224,4 @@ color="SLA",
 color_continuous_scale=["red","yellow","green"]
 )
 
-st.plotly_chart(fig_bar,use_container_width=True)
+st.plotly_chart(fig2,use_container_width=True)
