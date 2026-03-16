@@ -211,6 +211,12 @@ if total > 0:
 
     st.plotly_chart(fig, use_container_width=True)
 
+    # TABELA
+    view = res[['Mês', 'Meta', 'Até D+0', 'Até D+1', 'Até D+2', 'Pedido']].copy()
+    for c in ['Meta', 'Até D+0', 'Até D+1', 'Até D+2']: 
+        view[c] = view[c].apply(lambda x: f"{x:.2f}%".replace('.', ','))
+    st.dataframe(view.style.apply(estilo_tabela, axis=1), use_container_width=True, hide_index=True)
+
     # 1. RANKING CD ORIGEM
     st.subheader("Ranking CD Origem Críticos (SLA Até D+1)")
     rank_cd = base.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
