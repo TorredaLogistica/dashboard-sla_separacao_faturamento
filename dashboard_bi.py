@@ -187,13 +187,27 @@ if total > 0:
         view[c] = view[c].apply(lambda x: f"{x:.2f}%".replace('.', ','))
     st.dataframe(view.style.apply(estilo_tabela, axis=1), use_container_width=True, hide_index=True)
 
-    # RANKING
+    # RANKING CD ORIGEM
     st.subheader("Ranking CD Origem Críticos (SLA Até D+1)")
-    rank = base.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
-    rank['Até D+1'] = ((rank['flag_d0']+rank['flag_d1'])/rank['Pedido']*100).round(2)
-    rank = rank.sort_values('Até D+1')
-    fig_bar = px.bar(rank, x='CD Origem', y='Até D+1', text=rank['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
-                     color='Até D+1', color_continuous_scale='RdYlGn')
-    st.plotly_chart(fig_bar, use_container_width=True)
+    rank_cd = base.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
+    rank_cd['Até D+1'] = ((rank_cd['flag_d0']+rank_cd['flag_d1'])/rank_cd['Pedido']*100).round(2)
+    rank_cd = rank_cd.sort_values('Até D+1')
+    
+    fig_bar_cd = px.bar(rank_cd, x='CD Origem', y='Até D+1', 
+                        text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
+                        color='Até D+1', color_continuous_scale='RdYlGn')
+    st.plotly_chart(fig_bar_cd, use_container_width=True)
+
+    # NOVO: RANKING EMPRESAS CRÍTICOS
+    st.subheader("Ranking Empresas Críticos (SLA Até D+1)")
+    rank_emp = base.groupby('Empresa').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
+    rank_emp['Até D+1'] = ((rank_emp['flag_d0']+rank_emp['flag_d1'])/rank_emp['Pedido']*100).round(2)
+    rank_emp = rank_emp.sort_values('Até D+1')
+    
+    fig_bar_emp = px.bar(rank_emp, x='Empresa', y='Até D+1', 
+                         text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
+                         color='Até D+1', color_continuous_scale='RdYlGn')
+    st.plotly_chart(fig_bar_emp, use_container_width=True)
+
 else:
     st.warning("Nenhum dado encontrado.")
