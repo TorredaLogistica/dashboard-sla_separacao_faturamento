@@ -217,6 +217,12 @@ if total > 0:
         view[c] = view[c].apply(lambda x: f"{x:.2f}%".replace('.', ','))
     st.dataframe(view.style.apply(estilo_tabela, axis=1), use_container_width=True, hide_index=True)
 
+# ... (código anterior dos indicadores e gráfico de linha)
+
+    # =============================
+    # RANKINGS (CD, EMPRESA, CANAL)
+    # =============================
+    
     # 1. RANKING CD ORIGEM
     st.subheader("Ranking CD Origem Críticos (SLA Até D+1)")
     rank_cd = base.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
@@ -225,8 +231,7 @@ if total > 0:
     
     fig_bar_cd = px.bar(rank_cd, x='CD Origem', y='Até D+1', 
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
-                        color='Até D+1', color_continuous_scale='RdYlGn',
-                        labels={'Até D+1': 'SLA %'})
+                        color='Até D+1', color_continuous_scale='RdYlGn')
     st.plotly_chart(fig_bar_cd, use_container_width=True)
 
     # 2. RANKING EMPRESAS
@@ -237,8 +242,7 @@ if total > 0:
     
     fig_bar_emp = px.bar(rank_emp, x='Empresa', y='Até D+1', 
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
-                         color='Até D+1', color_continuous_scale='RdYlGn',
-                         labels={'Até D+1': 'SLA %'})
+                         color='Até D+1', color_continuous_scale='RdYlGn')
     st.plotly_chart(fig_bar_emp, use_container_width=True)
 
     # 3. RANKING CANAL DE ATUAÇÃO
@@ -249,48 +253,39 @@ if total > 0:
     
     fig_bar_canal = px.bar(rank_canal, x='Canal de Atuacao', y='Até D+1', 
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
-                           color='Até D+1', color_continuous_scale='RdYlGn',
-                           labels={'Até D+1': 'SLA %'})
+                           color='Até D+1', color_continuous_scale='RdYlGn')
     st.plotly_chart(fig_bar_canal, use_container_width=True)
 
-else:
-    st.warning("Nenhum dado encontrado para os filtros selecionados.")
-
-# =============================
-    # TABELA DE DADOS DETALHADOS
+    # =============================
+    # TABELA DE DETALHAMENTO FINAL
     # =============================
     st.markdown("---")
     st.subheader("📋 Detalhamento dos Pedidos")
     
-    # Selecionando as colunas específicas para exibição
     colunas_detalhe = [
         'Data NF', 'Pedido', 'Empresa', 'CD Origem', 
         'Operador', 'Canal de Atuacao', 'Aging_Ajustado_D+'
     ]
     
-    # Verificando se todas as colunas existem antes de exibir
+    # Filtra apenas as colunas que existem no arquivo
     colunas_presentes = [c for c in colunas_detalhe if c in base.columns]
     df_detalhe = base[colunas_presentes].copy()
 
-    # Formatação da Data para exibição amigável
+    # Formatação de data para a tabela
     if 'Data NF' in df_detalhe.columns:
         df_detalhe['Data NF'] = df_detalhe['Data NF'].dt.strftime('%d/%m/%Y')
 
-    # Exibição da tabela com recursos de busca e ordenação
-    st.dataframe(
-        df_detalhe, 
-        use_container_width=True, 
-        hide_index=True
-    )
+    st.dataframe(df_detalhe, use_container_width=True, hide_index=True)
 
-    # Opção para baixar os dados filtrados
+    # Botão de Download
     csv = df_detalhe.to_csv(index=False).encode('utf-8-sig')
     st.download_button(
         label="📥 Baixar Detalhamento em CSV",
         data=csv,
-        file_name=f"detalhamento_sla_{mes_selecionado.replace('/', '_')}.csv",
+        file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.csv",
         mime="text/csv",
     )
 
 else:
-    st.warning("Nenhum dado encontrado para os filtros selecionados.")
+    # Este else pertence ao 'if total > 0:' lá do início do dashboard
+    st.warning("Nenhum dado encontrado para os filtros selecionados.")    
