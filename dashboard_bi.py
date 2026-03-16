@@ -31,10 +31,14 @@ def check_password():
 check_password()
 
 # =============================
-# CABEÇALHO
+# CABEÇALHO (COM AJUSTE DE FUSO HORÁRIO)
 # =============================
+from datetime import timedelta
+
 st.title("Dashboard SLA Separação e Faturamento")
-st.caption(f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+# Ajusta para o horário de Brasília (UTC-3)
+horario_brasilia = datetime.now() - timedelta(hours=3)
+st.caption(f"Atualizado em {horario_brasilia.strftime('%d/%m/%Y %H:%M')}")
 
 # =============================
 # DICIONÁRIOS DE METAS (Mantidos conforme original)
