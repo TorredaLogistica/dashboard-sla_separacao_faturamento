@@ -187,7 +187,7 @@ if total > 0:
         view[c] = view[c].apply(lambda x: f"{x:.2f}%".replace('.', ','))
     st.dataframe(view.style.apply(estilo_tabela, axis=1), use_container_width=True, hide_index=True)
 
-    # RANKING CD ORIGEM
+    # 1. RANKING CD ORIGEM
     st.subheader("Ranking CD Origem Críticos (SLA Até D+1)")
     rank_cd = base.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
     rank_cd['Até D+1'] = ((rank_cd['flag_d0']+rank_cd['flag_d1'])/rank_cd['Pedido']*100).round(2)
@@ -195,10 +195,11 @@ if total > 0:
     
     fig_bar_cd = px.bar(rank_cd, x='CD Origem', y='Até D+1', 
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
-                        color='Até D+1', color_continuous_scale='RdYlGn')
+                        color='Até D+1', color_continuous_scale='RdYlGn',
+                        labels={'Até D+1': 'SLA %'})
     st.plotly_chart(fig_bar_cd, use_container_width=True)
 
-    # NOVO: RANKING EMPRESAS CRÍTICOS
+    # 2. RANKING EMPRESAS
     st.subheader("Ranking Empresas Críticos (SLA Até D+1)")
     rank_emp = base.groupby('Empresa').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
     rank_emp['Até D+1'] = ((rank_emp['flag_d0']+rank_emp['flag_d1'])/rank_emp['Pedido']*100).round(2)
@@ -206,8 +207,21 @@ if total > 0:
     
     fig_bar_emp = px.bar(rank_emp, x='Empresa', y='Até D+1', 
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
-                         color='Até D+1', color_continuous_scale='RdYlGn')
+                         color='Até D+1', color_continuous_scale='RdYlGn',
+                         labels={'Até D+1': 'SLA %'})
     st.plotly_chart(fig_bar_emp, use_container_width=True)
 
+    # 3. RANKING CANAL DE ATUAÇÃO
+    st.subheader("Ranking Canal de Atuação Críticos (SLA Até D+1)")
+    rank_canal = base.groupby('Canal de Atuacao').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
+    rank_canal['Até D+1'] = ((rank_canal['flag_d0']+rank_canal['flag_d1'])/rank_canal['Pedido']*100).round(2)
+    rank_canal = rank_canal.sort_values('Até D+1')
+    
+    fig_bar_canal = px.bar(rank_canal, x='Canal de Atuacao', y='Até D+1', 
+                           text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
+                           color='Até D+1', color_continuous_scale='RdYlGn',
+                           labels={'Até D+1': 'SLA %'})
+    st.plotly_chart(fig_bar_canal, use_container_width=True)
+
 else:
-    st.warning("Nenhum dado encontrado.")
+    st.warning("Nenhum dado encontrado para os filtros selecionados.")
