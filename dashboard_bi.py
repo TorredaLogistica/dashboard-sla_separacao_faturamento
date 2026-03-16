@@ -225,25 +225,41 @@ if total > 0:
     st.dataframe(view_display.style.apply(estilo_tabela, axis=1), use_container_width=True, hide_index=True)
 
     # =============================
-    # BOTÃO DE DOWNLOAD - TABELA RESUMO (EXCEL)
+    # BOTÃO DE DOWNLOAD - TABELA RESUMO (FORMATADO %)
     # =============================
     import io
     buffer_resumo = io.BytesIO()
     
     with pd.ExcelWriter(buffer_resumo, engine='xlsxwriter') as writer:
-        view.to_excel(writer, index=False, sheet_name='Resumo_SLA')
+        # Enviamos os dados divididos por 100 para o Excel aplicar a % corretamente
+        df_excel_resumo = view.copy()
+        cols_percent = ['Meta', 'Até D+0', 'Até D+1', 'Até D+2']
+        for col in cols_percent:
+            df_excel_resumo[col] = df_excel_resumo[col] / 100
+
+        df_excel_resumo.to_excel(writer, index=False, sheet_name='Resumo_SLA')
+        
+        workbook  = writer.book
         worksheet = writer.sheets['Resumo_SLA']
-        # Ajuste de colunas
-        for i, col in enumerate(view.columns):
-            column_len = max(view[col].astype(str).map(len).max(), len(col)) + 2
-            worksheet.set_column(i, i, column_len)
+
+        # Criamos o formato de porcentagem
+        format_percent = workbook.add_format({'num_format': '0.00%'})
+
+        # Aplicamos o formato nas colunas específicas (Meta, D0, D1, D2)
+        # No ExcelWriter, as colunas são 0-indexadas. Meta é a 1, D+0 é a 2...
+        for i, col_name in enumerate(df_excel_resumo.columns):
+            column_len = max(df_excel_resumo[col_name].astype(str).map(len).max(), len(col_name)) + 2
+            if col_name in cols_percent:
+                worksheet.set_column(i, i, column_len, format_percent)
+            else:
+                worksheet.set_column(i, i, column_len)
 
     st.download_button(
         label="📥 Baixar Tabela de Resumo em Excel (.xlsx)",
         data=buffer_resumo.getvalue(),
         file_name=f"resumo_sla_{mes_selecionado.replace('/', '_')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="btn_resumo_excel" # Chave única para não dar conflito com o outro botão
+        key="btn_resumo_excel"
     )
 
     # =============================
