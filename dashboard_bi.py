@@ -173,19 +173,43 @@ if total > 0:
         res['Meta'] = res['Mes_Ano'].apply(lambda x: obter_meta_dinamica(x, empresas_filtradas))
         res['Mês'] = res['Mes_Ano']
 
-    # GRÁFICO DE LINHAS
+    # =============================
+    # GRÁFICO DE LINHAS (CORES AJUSTADAS)
+    # =============================
     fig = go.Figure()
-    for col in ['Até D+0', 'Até D+1', 'Até D+2']:
-        fig.add_trace(go.Scatter(x=res['Mês'], y=res[col], name=col, mode='lines+markers+text', 
-                                 text=[f"{v:.1f}%" for v in res[col]], textposition="top center"))
-    fig.add_trace(go.Scatter(x=res['Mês'], y=res['Meta'], name='Meta', line=dict(dash='dash', color='black')))
-    st.plotly_chart(fig, use_container_width=True)
 
-    # TABELA
-    view = res[['Mês', 'Meta', 'Até D+0', 'Até D+1', 'Até D+2', 'Pedido']].copy()
-    for c in ['Meta', 'Até D+0', 'Até D+1', 'Até D+2']: 
-        view[c] = view[c].apply(lambda x: f"{x:.2f}%".replace('.', ','))
-    st.dataframe(view.style.apply(estilo_tabela, axis=1), use_container_width=True, hide_index=True)
+    # Linha Até D+0 (Mantive o padrão)
+    fig.add_trace(go.Scatter(x=res['Mês'], y=res['Até D+0'], name='Até D+0', 
+                             mode='lines+markers+text', 
+                             text=[f"{v:.1f}%" for v in res['Até D+0']], 
+                             textposition="top center"))
+
+    # Linha Até D+1 - VERDE BANDEIRA
+    fig.add_trace(go.Scatter(x=res['Mês'], y=res['Até D+1'], name='Até D+1', 
+                             mode='lines+markers+text', 
+                             line=dict(color='#006400', width=3), # Verde Bandeira (DarkGreen)
+                             text=[f"{v:.1f}%" for v in res['Até D+1']], 
+                             textposition="top center"))
+
+    # Linha Até D+2 (Mantive o padrão)
+    fig.add_trace(go.Scatter(x=res['Mês'], y=res['Até D+2'], name='Até D+2', 
+                             mode='lines+markers+text', 
+                             text=[f"{v:.1f}%" for v in res['Até D+2']], 
+                             textposition="top center"))
+
+    # Linha de Meta - CINZA
+    fig.add_trace(go.Scatter(x=res['Mês'], y=res['Meta'], name='Meta', 
+                             line=dict(dash='dash', color='#808080', width=2))) # Cinza
+
+    fig.update_layout(
+        title="Evolução SLA %",
+        xaxis_title="Período",
+        yaxis_title="Percentual (%)",
+        legend_title="Indicadores",
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
     # 1. RANKING CD ORIGEM
     st.subheader("Ranking CD Origem Críticos (SLA Até D+1)")
