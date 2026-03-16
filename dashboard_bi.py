@@ -188,7 +188,7 @@ if total > 0:
     st.dataframe(view.style.apply(estilo_tabela, axis=1), use_container_width=True, hide_index=True)
 
     # RANKING
-    st.subheader("Ranking CD Origem Críticos (Pior para Melhor SLA D+1)")
+    st.subheader("Ranking CD Origem Críticos (SLA Até D+1)")
     rank = base.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
     rank['Até D+1'] = ((rank['flag_d0']+rank['flag_d1'])/rank['Pedido']*100).round(2)
     rank = rank.sort_values('Até D+1')
