@@ -173,6 +173,7 @@ if total > 0:
         res['Meta'] = res['Mes_Ano'].apply(lambda x: obter_meta_dinamica(x, empresas_filtradas))
         res['Mês'] = res['Mes_Ano']
 
+    
     # =============================
     # GRÁFICO DE LINHAS (CORES AJUSTADAS)
     # =============================
@@ -217,7 +218,39 @@ if total > 0:
         view[c] = view[c].apply(lambda x: f"{x:.2f}%".replace('.', ','))
     st.dataframe(view.style.apply(estilo_tabela, axis=1), use_container_width=True, hide_index=True)
 
-# ... (código anterior dos indicadores e gráfico de linha)
+# ... (código anterior do gráfico de linhas)
+
+    # TABELA DE RESUMO (SLA E METAS)
+    view = res[['Mês', 'Meta', 'Até D+0', 'Até D+1', 'Até D+2', 'Pedido']].copy()
+    
+    # Exibição na tela (com formatação de % e estilo colorido)
+    view_display = view.copy()
+    for c in ['Meta', 'Até D+0', 'Até D+1', 'Até D+2']: 
+        view_display[c] = view_display[c].apply(lambda x: f"{x:.2f}%".replace('.', ','))
+    
+    st.dataframe(view_display.style.apply(estilo_tabela, axis=1), use_container_width=True, hide_index=True)
+
+    # =============================
+    # BOTÃO DE DOWNLOAD - TABELA RESUMO (EXCEL)
+    # =============================
+    import io
+    buffer_resumo = io.BytesIO()
+    
+    with pd.ExcelWriter(buffer_resumo, engine='xlsxwriter') as writer:
+        view.to_excel(writer, index=False, sheet_name='Resumo_SLA')
+        worksheet = writer.sheets['Resumo_SLA']
+        # Ajuste de colunas
+        for i, col in enumerate(view.columns):
+            column_len = max(view[col].astype(str).map(len).max(), len(col)) + 2
+            worksheet.set_column(i, i, column_len)
+
+    st.download_button(
+        label="📥 Baixar Tabela de Resumo em Excel (.xlsx)",
+        data=buffer_resumo.getvalue(),
+        file_name=f"resumo_sla_{mes_selecionado.replace('/', '_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="btn_resumo_excel" # Chave única para não dar conflito com o outro botão
+    )
 
     # =============================
     # RANKINGS (CD, EMPRESA, CANAL)
