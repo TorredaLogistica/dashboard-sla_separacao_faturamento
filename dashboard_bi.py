@@ -255,3 +255,42 @@ if total > 0:
 
 else:
     st.warning("Nenhum dado encontrado para os filtros selecionados.")
+
+# =============================
+    # TABELA DE DADOS DETALHADOS
+    # =============================
+    st.markdown("---")
+    st.subheader("📋 Detalhamento dos Pedidos")
+    
+    # Selecionando as colunas específicas para exibição
+    colunas_detalhe = [
+        'Data NF', 'Pedido', 'Empresa', 'CD Origem', 
+        'Operador', 'Canal de Atuacao', 'Aging_Ajustado_D+'
+    ]
+    
+    # Verificando se todas as colunas existem antes de exibir
+    colunas_presentes = [c for c in colunas_detalhe if c in base.columns]
+    df_detalhe = base[colunas_presentes].copy()
+
+    # Formatação da Data para exibição amigável
+    if 'Data NF' in df_detalhe.columns:
+        df_detalhe['Data NF'] = df_detalhe['Data NF'].dt.strftime('%d/%m/%Y')
+
+    # Exibição da tabela com recursos de busca e ordenação
+    st.dataframe(
+        df_detalhe, 
+        use_container_width=True, 
+        hide_index=True
+    )
+
+    # Opção para baixar os dados filtrados
+    csv = df_detalhe.to_csv(index=False).encode('utf-8-sig')
+    st.download_button(
+        label="📥 Baixar Detalhamento em CSV",
+        data=csv,
+        file_name=f"detalhamento_sla_{mes_selecionado.replace('/', '_')}.csv",
+        mime="text/csv",
+    )
+
+else:
+    st.warning("Nenhum dado encontrado para os filtros selecionados.")
