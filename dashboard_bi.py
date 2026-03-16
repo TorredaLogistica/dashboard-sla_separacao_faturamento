@@ -277,14 +277,31 @@ if total > 0:
 
     st.dataframe(df_detalhe, use_container_width=True, hide_index=True)
 
-    # Botão de Download
-    csv = df_detalhe.to_csv(index=False).encode('utf-8-sig')
+    # =============================
+    # BOTÃO DE DOWNLOAD (FORMATO EXCEL)
+    # =============================
+    import io
+
+    # Criar um buffer na memória para o arquivo Excel
+    buffer = io.BytesIO()
+    
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        df_detalhe.to_excel(writer, index=False, sheet_name='Detalhamento')
+        # Ajuste automático de largura das colunas (opcional mas melhora o visual)
+        worksheet = writer.sheets['Detalhamento']
+        for i, col in enumerate(df_detalhe.columns):
+            column_len = max(df_detalhe[col].astype(str).map(len).max(), len(col)) + 2
+            worksheet.set_column(i, i, column_len)
+
     st.download_button(
-        label="📥 Baixar Detalhamento em CSV",
-        data=csv,
-        file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.csv",
-        mime="text/csv",
+        label="📥 Baixar Detalhamento em Excel (.xlsx)",
+        data=buffer.getvalue(),
+        file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+else:
+    st.warning("Nenhum dado encontrado para os filtros selecionados.")
 
 else:
     # Este else pertence ao 'if total > 0:' lá do início do dashboard
