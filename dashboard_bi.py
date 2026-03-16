@@ -302,7 +302,3 @@ if total > 0:
 
 else:
     st.warning("Nenhum dado encontrado para os filtros selecionados.")
-
-else:
-    # Este else pertence ao 'if total > 0:' lá do início do dashboard
-    st.warning("Nenhum dado encontrado para os filtros selecionados.")    
