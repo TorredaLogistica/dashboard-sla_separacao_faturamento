@@ -71,12 +71,10 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 # =============================
 # CARGA DE DADOS (CORRIGIDA PARA .XLSB E GITHUB)
 # =============================
-st.cache_data(show_spinner="Carregando dados novos...", ttl=600) # ttl limpa o cache a cada 10 min
+
 def load_data(path):
     # engine='pyxlsb' é necessário para arquivos .xlsb
     df = pd.read_excel(path, engine='pyxlsb')
-    
-    # Limpeza básica de nomes de colunas
     df.columns = df.columns.str.strip()
     
     # CORREÇÃO DATA 1970: Converte números seriais do Excel para data real
