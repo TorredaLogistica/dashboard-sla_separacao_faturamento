@@ -71,7 +71,7 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 # =============================
 # CARGA DE DADOS (CORRIGIDA PARA .XLSB E GITHUB)
 # =============================
-@st.cache_data
+@st.cache_data(watch_skip_files=[])
 def load_data(path):
     # engine='pyxlsb' é necessário para arquivos .xlsb
     df = pd.read_excel(path, engine='pyxlsb')
