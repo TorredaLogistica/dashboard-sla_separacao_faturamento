@@ -72,51 +72,23 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 # CARGA DE DADOS (CORRIGIDA PARA .XLSB E GITHUB)
 # =============================
 
-
-
 @st.cache_data
 def load_data(path):
-
+    # engine='pyxlsb' é necessário para arquivos .xlsb
     df = pd.read_excel(path, engine='pyxlsb')
     df.columns = df.columns.str.strip()
-
-    # ===== 1) DETECTA coluna de data =====
-    col_data = None
-    for c in df.columns:
-        if "data" in c.lower():
-            col_data = c
-            break
-
-    if col_data is None:
-        st.error("Nenhuma coluna de data encontrada no arquivo!")
-        st.stop()
-
-    # ===== 2) AJUSTE ANTI-1970 =====
-    # Caso o Excel tenha datas numéricas (serial XLS)
-    if pd.api.types.is_numeric_dtype(df[col_data]):
-        df[col_data] = pd.to_datetime(df[col_data], unit="D", origin="1899-12-30")
+    
+    # CORREÇÃO DATA 1970: Converte números seriais do Excel para data real
+    if pd.api.types.is_numeric_dtype(df['Data NF']):
+        df['Data NF'] = pd.to_datetime(df['Data NF'], unit='D', origin='1899-12-30')
     else:
-        # Datas já são strings ou datetime → converte normalmente
-        df[col_data] = pd.to_datetime(df[col_data], errors="coerce")
-
-    # Se tudo virar NaT, algo está errado
-    if df[col_data].isna().all():
-        st.error(f"Falha ao converter '{col_data}' para data (inclusive ajuste anti-1970).")
-        st.stop()
-
-    # ===== 3) Mes_Ano =====
-    df["Mes_Ano"] = df[col_data].dt.strftime("%m/%Y")
-
-    # ===== 4) Extrai o número do Aging (evita D+20, D+29 etc.) =====
-    df["aging_num"] = df["Aging_Ajustado_D+"].astype(str).str.extract(r"D\+(\d+)").astype(int)
-
-    # ===== 5) Flags corretas =====
-    df["flag_d0"] = df["aging_num"] == 0
-    df["flag_d1"] = df["aging_num"] == 1
-    df["flag_d2"] = df["aging_num"] == 2
-
+        df['Data NF'] = pd.to_datetime(df['Data NF'])
+        
+    df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
+    df['flag_d0'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+0')
+    df['flag_d1'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+1')
+    df['flag_d2'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+2')
     return df
-
 
 # Para o GitHub, o arquivo deve estar na raiz do repositório
 caminho_arquivo = "Faturamento SLA 2026.xlsb"
@@ -191,14 +163,7 @@ if total > 0:
         res['Até D+1'] = ((res['flag_d0']+res['flag_d1'])/res['Pedido']*100).round(2)
         res['Até D+2'] = ((res['flag_d0']+res['flag_d1']+res['flag_d2'])/res['Pedido']*100).round(2)
         res['Meta'] = obter_meta_dinamica(mes_selecionado, empresas_filtradas)
-        
- --- Correção do tipo datetime após o agrupamento ---
-if 'Data NF' in res.columns:
-    res['Data NF'] = pd.to_datetime(res['Data NF'], errors='coerce')
-    res['Mês'] = res['Data NF'].dt.strftime('%d/%m')
-else:
-    st.error("Coluna 'Data NF' não encontrada após agrupamento.")
-
+        res['Mês'] = res['Data NF'].dt.strftime('%d/%m')
     else:
         res = base.groupby('Mes_Ano').agg({'flag_d0':'sum','flag_d1':'sum','flag_d2':'sum','Pedido':'count'}).reset_index()
         res['data_sort'] = pd.to_datetime(res['Mes_Ano'], format='%m/%Y')
