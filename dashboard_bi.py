@@ -191,7 +191,13 @@ if total > 0:
         res['Até D+1'] = ((res['flag_d0']+res['flag_d1'])/res['Pedido']*100).round(2)
         res['Até D+2'] = ((res['flag_d0']+res['flag_d1']+res['flag_d2'])/res['Pedido']*100).round(2)
         res['Meta'] = obter_meta_dinamica(mes_selecionado, empresas_filtradas)
-        res['Mês'] = res['Data NF'].dt.strftime('%d/%m')
+        
+# Corrige o tipo da coluna depois do groupby
+res['Data NF'] = pd.to_datetime(res['Data NF'], errors='coerce')
+
+# Agora pode formatar corretamente
+res['Mês'] = res['Data NF'].dt.strftime('%d/%m')
+
     else:
         res = base.groupby('Mes_Ano').agg({'flag_d0':'sum','flag_d1':'sum','flag_d2':'sum','Pedido':'count'}).reset_index()
         res['data_sort'] = pd.to_datetime(res['Mes_Ano'], format='%m/%Y')
