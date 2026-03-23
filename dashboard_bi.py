@@ -73,13 +73,14 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 # =============================
 
 
+
 @st.cache_data
 def load_data(path):
 
     df = pd.read_excel(path, engine='pyxlsb')
     df.columns = df.columns.str.strip()
 
-    # ===== 1) Identifica automaticamente a coluna de data =====
+    # ===== 1) DETECTA coluna de data =====
     col_data = None
     for c in df.columns:
         if "data" in c.lower():
@@ -90,20 +91,26 @@ def load_data(path):
         st.error("Nenhuma coluna de data encontrada no arquivo!")
         st.stop()
 
-    # ===== 2) Converte para datetime corretamente =====
-    df[col_data] = pd.to_datetime(df[col_data], errors='coerce')
+    # ===== 2) AJUSTE ANTI-1970 =====
+    # Caso o Excel tenha datas numéricas (serial XLS)
+    if pd.api.types.is_numeric_dtype(df[col_data]):
+        df[col_data] = pd.to_datetime(df[col_data], unit="D", origin="1899-12-30")
+    else:
+        # Datas já são strings ou datetime → converte normalmente
+        df[col_data] = pd.to_datetime(df[col_data], errors="coerce")
 
+    # Se tudo virar NaT, algo está errado
     if df[col_data].isna().all():
-        st.error(f"Falha ao converter a coluna '{col_data}' para data!")
+        st.error(f"Falha ao converter '{col_data}' para data (inclusive ajuste anti-1970).")
         st.stop()
 
-    # ===== 3) Cria Mes_Ano corretamente =====
+    # ===== 3) Mes_Ano =====
     df["Mes_Ano"] = df[col_data].dt.strftime("%m/%Y")
 
-    # ===== 4) Extrai o número do Aging (corrigindo D+20, D+29 etc.) =====
+    # ===== 4) Extrai o número do Aging (evita D+20, D+29 etc.) =====
     df["aging_num"] = df["Aging_Ajustado_D+"].astype(str).str.extract(r"D\+(\d+)").astype(int)
 
-    # ===== 5) Flags de SLA corretas =====
+    # ===== 5) Flags corretas =====
     df["flag_d0"] = df["aging_num"] == 0
     df["flag_d1"] = df["aging_num"] == 1
     df["flag_d2"] = df["aging_num"] == 2
