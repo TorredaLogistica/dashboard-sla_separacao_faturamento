@@ -85,9 +85,15 @@ def load_data(path):
         df['Data NF'] = pd.to_datetime(df['Data NF'])
         
     df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
-    df['flag_d0'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+0')
-    df['flag_d1'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+1')
-    df['flag_d2'] = df['Aging_Ajustado_D+'].astype(str).str.contains('D\+2')
+    
+# Extrai apenas o número depois do D+
+df["aging_num"] = df["Aging_Ajustado_D+"].astype(str).str.extract(r"D\+(\d+)").astype(int)
+
+# Flags corretas
+df["flag_d0"] = df["aging_num"] == 0
+df["flag_d1"] = df["aging_num"] == 1
+df["flag_d2"] = df["aging_num"] == 2
+
     return df
 
 # Para o GitHub, o arquivo deve estar na raiz do repositório
