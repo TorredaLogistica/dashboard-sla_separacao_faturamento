@@ -72,21 +72,44 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 # CARGA DE DADOS (CORRIGIDA PARA .XLSB E GITHUB)
 # =============================
 
+
 @st.cache_data
 def load_data(path):
-    # engine='pyxlsb' é necessário para arquivos .xlsb
+
     df = pd.read_excel(path, engine='pyxlsb')
     df.columns = df.columns.str.strip()
-    
-    # CORREÇÃO DATA 1970: Converte números seriais do Excel para data real
-    if pd.api.types.is_numeric_dtype(df['Data NF']):
-        df['Data NF'] = pd.to_datetime(df['Data NF'], unit='D', origin='1899-12-30')
-    else:
-        df['Data NF'] = pd.to_datetime(df['Data NF'])
-        df['flag_d0'] = df['Aging_Ajustado_D+'].astype(str).str.match(r'^D\+0$')
-        df['flag_d1'] = df['Aging_Ajustado_D+'].astype(str).str.match(r'^D\+1$')
-        df['flag_d2'] = df['Aging_Ajustado_D+'].astype(str).str.match(r'^D\+2$')  
+
+    # ===== 1) Identifica automaticamente a coluna de data =====
+    col_data = None
+    for c in df.columns:
+        if "data" in c.lower():
+            col_data = c
+            break
+
+    if col_data is None:
+        st.error("Nenhuma coluna de data encontrada no arquivo!")
+        st.stop()
+
+    # ===== 2) Converte para datetime corretamente =====
+    df[col_data] = pd.to_datetime(df[col_data], errors='coerce')
+
+    if df[col_data].isna().all():
+        st.error(f"Falha ao converter a coluna '{col_data}' para data!")
+        st.stop()
+
+    # ===== 3) Cria Mes_Ano corretamente =====
+    df["Mes_Ano"] = df[col_data].dt.strftime("%m/%Y")
+
+    # ===== 4) Extrai o número do Aging (corrigindo D+20, D+29 etc.) =====
+    df["aging_num"] = df["Aging_Ajustado_D+"].astype(str).str.extract(r"D\+(\d+)").astype(int)
+
+    # ===== 5) Flags de SLA corretas =====
+    df["flag_d0"] = df["aging_num"] == 0
+    df["flag_d1"] = df["aging_num"] == 1
+    df["flag_d2"] = df["aging_num"] == 2
+
     return df
+
 
 # Para o GitHub, o arquivo deve estar na raiz do repositório
 caminho_arquivo = "Faturamento SLA 2026.xlsb"
