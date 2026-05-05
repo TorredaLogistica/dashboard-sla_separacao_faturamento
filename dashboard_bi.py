@@ -6,6 +6,11 @@ import plotly.graph_objects as go
 from datetime import datetime, date
 import os
 
+# 🔥 BOTÃO DE ATUALIZAÇÃO (COLOCA AQUI)
+if st.button("🔄 Atualizar dados"):
+    st.cache_data.clear()
+    st.rerun()
+
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
@@ -72,7 +77,7 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
 # CARGA DE DADOS (CORRIGIDA PARA .XLSB E GITHUB)
 # =============================
 
-@st.cache_data (ttl=5)
+@st.cache_data
 def load_data(path):
     # engine='pyxlsb' é necessário para arquivos .xlsb
     df = pd.read_excel(path, engine='pyxlsb')
