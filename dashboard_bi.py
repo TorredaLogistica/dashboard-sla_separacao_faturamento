@@ -6,10 +6,6 @@ import plotly.graph_objects as go
 from datetime import datetime, date
 import os
 
-# 🔥 BOTÃO DE ATUALIZAÇÃO (COLOCA AQUI)
-if st.button("🔄 Atualizar dados"):
-    st.cache_data.clear()
-    st.rerun()
 
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
@@ -72,6 +68,12 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
         if emp == 'Embratel': return METAS_EMBRATEL.get(mes, 85.0)
         if emp == 'Claro Movel': return METAS_CLARO_MOVEL.get(mes, 85.0)
     return METAS_CLARO_BRASIL.get(mes, 85.0)
+
+
+# 🔥 BOTÃO DE ATUALIZAÇÃO (COLOCA AQUI)
+if st.button("🔄 Atualizar dados"):
+    st.cache_data.clear()
+    st.rerun()
 
 # =============================
 # CARGA DE DADOS (CORRIGIDA PARA .XLSB E GITHUB)
