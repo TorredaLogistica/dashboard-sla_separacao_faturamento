@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from datetime import datetime, date
 import os
 
-
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
@@ -68,12 +67,6 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
         if emp == 'Embratel': return METAS_EMBRATEL.get(mes, 85.0)
         if emp == 'Claro Movel': return METAS_CLARO_MOVEL.get(mes, 85.0)
     return METAS_CLARO_BRASIL.get(mes, 85.0)
-
-
-# 🔥 BOTÃO DE ATUALIZAÇÃO (COLOCA AQUI)
-if st.button("🔄 Atualizar dados"):
-    st.cache_data.clear()
-    st.rerun()
 
 # =============================
 # CARGA DE DADOS (CORRIGIDA PARA .XLSB E GITHUB)
@@ -358,3 +351,57 @@ if total > 0:
 
 else:
     st.warning("Nenhum dado encontrado para os filtros selecionados.")
+
+
+
+
+
+# =============================
+# VOLUMETRIA DE PEDIDOS
+# =============================
+
+st.markdown("---")
+st.subheader("Volumetria de Pedidos")
+
+# Dados do gráfico
+df_volume = pd.DataFrame({
+    "Canal de Atuação": ["Agente Autorizado", "Ecommerce", "Loja Própria"],
+    "Janeiro": [337, 139, 423],
+    "Fevereiro": [505, 135, 420],
+    "Março": [751, 158, 617],
+    "Abril": [576, 120, 257],
+    "Maio": [141, 39, 195]
+})
+
+# Converte para formato longo
+df_volume_melt = df_volume.melt(
+    id_vars="Canal de Atuação",
+    var_name="Mês",
+    value_name="Volume"
+)
+
+# Gráfico
+fig_volume = px.bar(
+    df_volume_melt,
+    x="Canal de Atuação",
+    y="Volume",
+    color="Mês",
+    barmode="group",
+    text="Volume",
+    title="VOLUMETRIA DE PEDIDOS"
+)
+
+# Ajustes visuais (seguindo padrão do dashboard)
+fig_volume.update_layout(
+    height=550,
+    title_x=0.0,
+    xaxis_title="Canal de Atuação",
+    yaxis_title="",
+    legend_title_text="Mês",
+)
+
+fig_volume.update_traces(
+    textposition="outside"
+)
+
+st.plotly_chart(fig_volume, use_container_width=True)
