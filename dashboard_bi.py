@@ -160,11 +160,31 @@ if aba == "📦 Volumetria de Pedidos":
         st.error("Coluna de canal não encontrada (esperado: 'Canal de Atuacao' ou 'Canal').")
         st.stop()
 
+    # Normaliza o texto do canal para evitar duplicidades por variação de maiúsculas/minúsculas, espaços e acentos
+    import unicodedata, re
+    def _norm_txt(x):
+        s = str(x) if x is not None else ''
+        s = s.strip()
+        s = re.sub(r'\s+', ' ', s)
+        s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii')
+        s = s.lower()
+        return s
+
+    mapa_canais = {
+        'ecommerce': 'Ecommerce',
+        'e-commerce': 'Ecommerce',
+        'e commerce': 'Ecommerce',
+        'agente autorizado': 'Agente Autorizado',
+        'loja propria': 'Loja Própria'
+    }
+
+    base_vol['_Canal_Display'] = base_vol[col_canal].apply(lambda v: mapa_canais.get(_norm_txt(v), str(v).strip()))
+
     # Conta pedidos (se existir coluna Pedido) ou linhas (fallback)
     if 'Pedido' in base_vol.columns:
-        vol = (base_vol.groupby([col_canal, 'Mes_Ano'])['Pedido'].count().reset_index(name='Volume'))
+        vol = (base_vol.groupby(['_Canal_Display', 'Mes_Ano'])['Pedido'].count().reset_index(name='Volume'))
     else:
-        vol = (base_vol.groupby([col_canal, 'Mes_Ano']).size().reset_index(name='Volume'))
+        vol = (base_vol.groupby(['_Canal_Display', 'Mes_Ano']).size().reset_index(name='Volume'))
 
     # Ordena os meses selecionados no eixo de cores/legenda
     ordem_meses = sorted(meses_selecionados, key=lambda x: datetime.strptime(x, '%m/%Y')) if meses_selecionados else None
@@ -172,7 +192,7 @@ if aba == "📦 Volumetria de Pedidos":
 
     fig_volume = px.bar(
         vol,
-        x=col_canal,
+        x='_Canal_Display',
         y='Volume',
         color='Mes_Ano',
         barmode='group',
