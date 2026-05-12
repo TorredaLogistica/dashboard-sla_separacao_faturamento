@@ -118,9 +118,14 @@ with st.sidebar:
     if os.path.exists("logo_claro.png"):
         st.image("logo_claro.png", use_container_width=True)
     
-    aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal"], horizontal=True)
+    aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos"], horizontal=True)
     lista_meses = sorted(df['Mes_Ano'].unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
-    mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
+    if aba == "📦 Volumetria de Pedidos":
+        meses_selecionados = st.multiselect("Mês de Referência", lista_meses, default=[lista_meses[0]] if lista_meses else [])
+        mes_selecionado = meses_selecionados[0] if meses_selecionados else (lista_meses[0] if lista_meses else None)
+    else:
+        mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
+        meses_selecionados = [mes_selecionado] if mes_selecionado else []
     
     filtros = ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']
     mask = np.ones(len(df), dtype=bool)
@@ -134,6 +139,60 @@ with st.sidebar:
 
 dff_global = df[mask].copy()
 empresas_filtradas = filtros_selecionados.get('Empresa', [])
+
+# =============================
+# VOLUMETRIA DE PEDIDOS (NOVA VISÃO)
+# =============================
+if aba == "📦 Volumetria de Pedidos":
+    st.subheader("📦 Volumetria de Pedidos")
+
+    base_vol = dff_global[dff_global['Mes_Ano'].isin(meses_selecionados)].copy()
+    if base_vol.empty:
+        st.warning("Nenhum dado encontrado para os filtros selecionados.")
+        st.stop()
+
+    # Define a coluna de canal (prioriza Canal de Atuacao; fallback para Canal)
+    if 'Canal de Atuacao' in base_vol.columns:
+        col_canal = 'Canal de Atuacao'
+    elif 'Canal' in base_vol.columns:
+        col_canal = 'Canal'
+    else:
+        st.error("Coluna de canal não encontrada (esperado: 'Canal de Atuacao' ou 'Canal').")
+        st.stop()
+
+    # Conta pedidos (se existir coluna Pedido) ou linhas (fallback)
+    if 'Pedido' in base_vol.columns:
+        vol = (base_vol.groupby([col_canal, 'Mes_Ano'])['Pedido'].count().reset_index(name='Volume'))
+    else:
+        vol = (base_vol.groupby([col_canal, 'Mes_Ano']).size().reset_index(name='Volume'))
+
+    # Ordena os meses selecionados no eixo de cores/legenda
+    ordem_meses = sorted(meses_selecionados, key=lambda x: datetime.strptime(x, '%m/%Y')) if meses_selecionados else None
+    cat_orders = {'Mes_Ano': ordem_meses} if ordem_meses else None
+
+    fig_volume = px.bar(
+        vol,
+        x=col_canal,
+        y='Volume',
+        color='Mes_Ano',
+        barmode='group',
+        text='Volume',
+        title='VOLUMETRIA DE PEDIDOS',
+        category_orders=cat_orders
+    )
+
+    fig_volume.update_layout(
+        height=550,
+        title_x=0.0,
+        xaxis_title='Canal de Atuação',
+        yaxis_title='',
+        legend_title_text='Mês'
+    )
+    fig_volume.update_traces(textposition='outside')
+
+    st.plotly_chart(fig_volume, use_container_width=True)
+    st.stop()
+
 
 # =============================
 # DASHBOARD PRINCIPAL
