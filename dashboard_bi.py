@@ -104,29 +104,83 @@ if not os.path.exists(caminho_arquivo):
 
 df = load_data(caminho_arquivo)
 
+
 # =============================
-# SIDEBAR
+# SIDEBAR - VISUALIZAÇÃO
 # =============================
 with st.sidebar:
-    if os.path.exists("logo_claro.png"):
-        st.image("logo_claro.png", use_container_width=True)
-    
-    aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal"], horizontal=True)
-    lista_meses = sorted(df['Mes_Ano'].unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
-    mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
-    
-    filtros = ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']
-    mask = np.ones(len(df), dtype=bool)
-    filtros_selecionados = {}
 
-    for col in filtros:
-        if col in df.columns:
-            vals = st.multiselect(col, sorted(df[col].dropna().unique()))
-            filtros_selecionados[col] = vals
-            if vals: mask &= df[col].isin(vals)
+    st.markdown("### 📊 Visualização")
+    tipo_visualizacao = st.radio(
+        "",
+        ["Visão Diária", "Evolução Mensal"],
+        index=0,
+        horizontal=False
+    )
 
-dff_global = df[mask].copy()
-empresas_filtradas = filtros_selecionados.get('Empresa', [])
+    st.markdown("---")
+
+    st.markdown("### 📅 Mês de Referência")
+    meses_disponiveis = sorted(df["Mes_Ano"].dropna().unique())
+    meses_selecionados = st.multiselect(
+        "",
+        meses_disponiveis,
+        default=[meses_disponiveis[-1]] if meses_disponiveis else []
+    )
+
+    st.markdown("### Operador")
+    operador_sel = st.multiselect(
+        "",
+        sorted(df["Operador"].dropna().unique())
+    )
+
+    st.markdown("### CD Origem")
+    cd_sel = st.multiselect(
+        "",
+        sorted(df["CD Origem"].dropna().unique())
+    )
+
+    st.markdown("### Empresa")
+    empresa_sel = st.multiselect(
+        "",
+        sorted(df["Empresa"].dropna().unique())
+    )
+
+    st.markdown("### Unidade de Negócio")
+    unidade_sel = st.multiselect(
+        "",
+        sorted(df["Unidade de Negocio"].dropna().unique())
+    )
+
+    st.markdown("### Canal de Atuação")
+    canal_sel = st.multiselect(
+        "",
+        sorted(df["Canal de Atuacao"].dropna().unique())
+    )
+
+
+# =============================
+# APLICAÇÃO DOS FILTROS
+# =============================
+dff = df.copy()
+
+if meses_selecionados:
+    dff = dff[dff["Mes_Ano"].isin(meses_selecionados)]
+
+if operador_sel:
+    dff = dff[dff["Operador"].isin(operador_sel)]
+
+if cd_sel:
+    dff = dff[dff["CD Origem"].isin(cd_sel)]
+
+if empresa_sel:
+    dff = dff[dff["Empresa"].isin(empresa_sel)]
+
+if unidade_sel:
+    dff = dff[dff["Unidade de Negocio"].isin(unidade_sel)]
+
+if canal_sel:
+    dff = dff[dff["Canal de Atuacao"].isin(canal_sel)]
 
 # =============================
 # DASHBOARD PRINCIPAL
@@ -356,52 +410,46 @@ else:
 
 
 
+
 # =============================
 # VOLUMETRIA DE PEDIDOS
 # =============================
+if tipo_visualizacao == "Evolução Mensal":
 
-st.markdown("---")
-st.subheader("Volumetria de Pedidos")
+    st.subheader("📦 Volumetria de Pedidos")
 
-# Dados do gráfico
-df_volume = pd.DataFrame({
-    "Canal de Atuação": ["Agente Autorizado", "Ecommerce", "Loja Própria"],
-    "Janeiro": [337, 139, 423],
-    "Fevereiro": [505, 135, 420],
-    "Março": [751, 158, 617],
-    "Abril": [576, 120, 257],
-    "Maio": [141, 39, 195]
-})
+    if dff.empty:
+        st.warning("Nenhum dado encontrado para os filtros selecionados.")
+    else:
+        # Agregação dos dados
+        volume = (
+            dff
+            .groupby(["Canal de Atuacao", "Mes_Ano"])
+            .size()
+            .reset_index(name="Volume")
+        )
 
-# Converte para formato longo
-df_volume_melt = df_volume.melt(
-    id_vars="Canal de Atuação",
-    var_name="Mês",
-    value_name="Volume"
-)
+        # Gráfico
+        fig_volume = px.bar(
+            volume,
+            x="Canal de Atuacao",
+            y="Volume",
+            color="Mes_Ano",
+            barmode="group",
+            text="Volume",
+            title="VOLUMETRIA DE PEDIDOS"
+        )
 
-# Gráfico
-fig_volume = px.bar(
-    df_volume_melt,
-    x="Canal de Atuação",
-    y="Volume",
-    color="Mês",
-    barmode="group",
-    text="Volume",
-    title="VOLUMETRIA DE PEDIDOS"
-)
+        fig_volume.update_layout(
+            height=550,
+            title_x=0.0,
+            xaxis_title="Canal de Atuação",
+            yaxis_title="",
+            legend_title_text="Mês",
+        )
 
-# Ajustes visuais (seguindo padrão do dashboard)
-fig_volume.update_layout(
-    height=550,
-    title_x=0.0,
-    xaxis_title="Canal de Atuação",
-    yaxis_title="",
-    legend_title_text="Mês",
-)
+        fig_volume.update_traces(
+            textposition="outside"
+        )
 
-fig_volume.update_traces(
-    textposition="outside"
-)
-
-st.plotly_chart(fig_volume, use_container_width=True)
+        st.plotly_chart(fig_volume, use_container_width=True)
