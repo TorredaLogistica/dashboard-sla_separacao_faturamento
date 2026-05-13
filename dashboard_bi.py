@@ -304,7 +304,7 @@ if aba == "📦 Volumetria de Pedidos":
         legend_title_text='Mês'
     )
     if 'modo_mobile' in globals() and modo_mobile:
-        fig_volume.update_traces(textposition='outside', textangle=90, textfont_size=10, cliponaxis=False)
+        fig_volume.update_traces(textposition='outside', textangle=-90, textfont_size=10, cliponaxis=False)
         fig_volume.update_layout(margin=dict(l=30, r=10, t=60, b=90), legend_orientation='h', legend_y=-0.25)
     else:
         fig_volume.update_traces(textposition='outside')
