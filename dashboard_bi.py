@@ -36,7 +36,7 @@ check_password()
 # =============================
 from datetime import timedelta
 
-st.title("Dashboard Separação e Faturamento")
+st.title("Dashboard SLA Separação e Faturamento")
 # Ajusta para o horário de Brasília (UTC-3)
 horario_brasilia = datetime.now() - timedelta(hours=3)
 st.caption(f"Atualizado em {horario_brasilia.strftime('%d/%m/%Y %H:%M')}")
@@ -209,6 +209,10 @@ df = load_data(caminho_arquivo)
 with st.sidebar:
     if os.path.exists("logo_claro.png"):
         st.image("logo_claro.png", use_container_width=True)
+
+    # 📱 Modo celular: melhora a leitura (rótulos dos valores na vertical)
+    modo_mobile = st.checkbox('📱 Modo celular (evitar números sobrepostos)', value=False)
+
     
     aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos"], horizontal=True)
     lista_meses = sorted(df['Mes_Ano'].unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
@@ -279,7 +283,11 @@ if aba == "📦 Volumetria de Pedidos":
         yaxis_title='',
         legend_title_text='Mês'
     )
-    fig_volume.update_traces(textposition='outside')
+    if 'modo_mobile' in globals() and modo_mobile:
+        fig_volume.update_traces(textposition='outside', textangle=90, textfont_size=10, cliponaxis=False)
+        fig_volume.update_layout(margin=dict(l=30, r=10, t=60, b=90), legend_orientation='h', legend_y=-0.25)
+    else:
+        fig_volume.update_traces(textposition='outside')
 
     st.plotly_chart(fig_volume, use_container_width=True)
     st.stop()
@@ -480,6 +488,7 @@ if total > 0:
     # Formatação de data para a tabela
     if 'Data NF' in df_detalhe.columns:
         df_detalhe['Data NF'] = df_detalhe['Data NF'].dt.strftime('%d/%m/%Y')
+
 
     # Garantia extra: Pedido sem separador de milhar na exibição/baixar Excel
     if 'Pedido' in df_detalhe.columns:
