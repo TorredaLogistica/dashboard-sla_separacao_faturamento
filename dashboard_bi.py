@@ -96,7 +96,7 @@ check_password()
 # =============================
 from datetime import timedelta
 
-st.title("Dashboard SLA Separação e Faturamento")
+st.title("Dashboard Separação e Faturamento")
 # Ajusta para o horário de Brasília (UTC-3)
 horario_brasilia = datetime.now() - timedelta(hours=3)
 st.caption(f"Atualizado em {horario_brasilia.strftime('%d/%m/%Y %H:%M')}")
