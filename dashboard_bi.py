@@ -36,7 +36,7 @@ check_password()
 # =============================
 from datetime import timedelta
 
-st.title("Dashboard Separação e Faturamento")
+st.title("Dashboard SLA Separação e Faturamento")
 # Ajusta para o horário de Brasília (UTC-3)
 horario_brasilia = datetime.now() - timedelta(hours=3)
 st.caption(f"Atualizado em {horario_brasilia.strftime('%d/%m/%Y %H:%M')}")
@@ -70,6 +70,50 @@ def obter_meta_dinamica(mes, empresas_selecionadas):
     return METAS_CLARO_BRASIL.get(mes, 85.0)
 
 
+
+
+def normalizar_pedido(serie: pd.Series) -> pd.Series:
+    """Padroniza a coluna Pedido para exibição SEM separador de milhar.
+
+    Converte sempre para texto para evitar formatação automática do Streamlit.
+    Exemplos esperados:
+      32,310,684 -> 32310684
+      32.310.684 -> 32310684
+      32310684.0 -> 32310684
+    """
+    if serie is None:
+        return serie
+
+    # Se vier numérico (int/float), converte para inteiro (preserva NA) e depois string
+    if pd.api.types.is_numeric_dtype(serie):
+        num = pd.to_numeric(serie, errors='coerce').round(0).astype('Int64')
+        return num.astype(str).mask(num.isna(), '')
+
+    s = serie.astype(str)
+
+    # remove espaços (inclui NBSP)
+    s = (s
+         .str.replace(' ', '', regex=False)
+         .str.replace(' ', '', regex=False)
+         .str.strip()
+    )
+
+    # remove somente separadores de milhar (vírgula/ponto) em grupos de 3 dígitos
+    s = s.str.replace(r'(?<=\d)[,\.](?=\d{3}(\D|$))', '', regex=True)
+
+    # trata casos tipo "32310684.0" / "32310684,0"
+    s = s.str.replace(r'([\.,]0)$', '', regex=True)
+
+    # fallback: se ainda restar algo numérico, força int quando for inteiro-like
+    num = pd.to_numeric(s, errors='coerce')
+    mask = ~num.isna()
+    if mask.any():
+        intlike = mask & (np.isclose(num % 1, 0))
+        if intlike.any():
+            s.loc[intlike] = num.loc[intlike].round(0).astype('Int64').astype(str)
+
+    return s.replace({'nan': '', 'None': '', '<NA>': ''})
+
 # 🔥 BOTÃO DE ATUALIZAÇÃO (COLOCA AQUI)
 if st.button("🔄 Atualizar dados"):
     st.cache_data.clear()
@@ -84,6 +128,17 @@ def load_data(path):
     # engine='pyxlsb' é necessário para arquivos .xlsb
     df = pd.read_excel(path, engine='pyxlsb')
     df.columns = df.columns.str.strip()
+
+    # =============================
+    # PADRONIZAÇÃO DE PEDIDO (SEM SEPARADOR DE MILHAR)
+    # =============================
+    # Garante que o ID do pedido fique como texto e sem formatação: 32310684
+    if 'Pedido' not in df.columns and 'Pedidos' in df.columns:
+        df['Pedido'] = df['Pedidos']
+
+    if 'Pedido' in df.columns:
+        df['Pedido'] = normalizar_pedido(df['Pedido'])
+
     
     # PADRONIZAÇÃO DE CANAIS (evita duplicidade por maiúsculas/minúsculas, espaços e acentos)
     import unicodedata, re
@@ -425,6 +480,10 @@ if total > 0:
     # Formatação de data para a tabela
     if 'Data NF' in df_detalhe.columns:
         df_detalhe['Data NF'] = df_detalhe['Data NF'].dt.strftime('%d/%m/%Y')
+
+    # Garantia extra: Pedido sem separador de milhar na exibição/baixar Excel
+    if 'Pedido' in df_detalhe.columns:
+        df_detalhe['Pedido'] = normalizar_pedido(df_detalhe['Pedido'])
 
     st.dataframe(df_detalhe, use_container_width=True, hide_index=True)
 
