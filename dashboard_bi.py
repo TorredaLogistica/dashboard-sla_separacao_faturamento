@@ -7,6 +7,46 @@ from datetime import datetime, date
 import os
 
 
+
+
+# =============================
+# DETECÇÃO AUTOMÁTICA DE CELULAR + AJUSTES DE FONTE (PLOTLY)
+# =============================
+
+def detectar_mobile() -> bool:
+    """Detecta acesso via celular/tablet pelo User-Agent.
+
+    Usa st.context.headers quando disponível.
+    Se st.context não existir/der erro, retorna False.
+    """
+    try:
+        ua = str(st.context.headers.get("user-agent", "")).lower()
+    except Exception:
+        return False
+
+    sinais_mobile = [
+        "android", "iphone", "ipad", "ipod", "mobile",
+        "windows phone", "opera mini", "blackberry",
+    ]
+    return any(s in ua for s in sinais_mobile)
+
+
+def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
+    """Ajusta fontes do Plotly para melhor legibilidade e proporção."""
+    # Fontes base (maiores no desktop; no celular mantém legível sem estourar layout)
+    font_base = 16 if not modo_mobile else 13
+    font_axis = 14 if not modo_mobile else 12
+    font_legend = 14 if not modo_mobile else 12
+    font_title = 22 if not modo_mobile else 18
+
+    fig.update_layout(
+        font=dict(size=font_base),
+        title_font=dict(size=font_title),
+        legend=dict(font=dict(size=font_legend)),
+        xaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
+        yaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
+    )
+    return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
@@ -34,7 +74,6 @@ def check_password():
         else:
             st.session_state["password_correct"] = False
 
-    # Se não estiver autenticado, mostra a tela de senha e interrompe o app
     if not st.session_state.get("password_correct", False):
         st.title("🔒 Acesso Restrito")
         st.text_input(
@@ -44,11 +83,12 @@ def check_password():
             key="password",
         )
 
-        # Mostra erro somente depois que o usuário tentar (ou seja, digitou algo)
+        # Mostra erro somente depois que o usuário tentar
         if st.session_state.get("password", "") != "" and not st.session_state.get("password_correct", False):
             st.error("Senha incorreta")
 
         st.stop()
+
 check_password()
 
 # =============================
@@ -231,7 +271,11 @@ with st.sidebar:
         st.image("logo_claro.png", use_container_width=True)
 
     # 📱 Modo celular: melhora a leitura (rótulos dos valores na vertical)
-    modo_mobile = st.checkbox('📱 Modo celular (evitar números sobrepostos)', value=False)
+    # 📱 Modo celular (automático via User-Agent, com opção de override)
+    auto_mobile = detectar_mobile()
+    if 'modo_mobile' not in st.session_state:
+        st.session_state['modo_mobile'] = auto_mobile
+    modo_mobile = st.checkbox('📱 Modo celular (auto)', key='modo_mobile', help='Ativado automaticamente quando detectado acesso por celular. Desmarque para forçar modo desktop.')
 
     
     aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos"], horizontal=True)
@@ -297,17 +341,20 @@ if aba == "📦 Volumetria de Pedidos":
     )
 
     fig_volume.update_layout(
-        height=550,
+        height=(650 if modo_mobile else 560),
         title_x=0.0,
         xaxis_title='Canal de Atuação',
         yaxis_title='',
         legend_title_text='Mês'
     )
-    if 'modo_mobile' in globals() and modo_mobile:
-        fig_volume.update_traces(textposition='outside', textangle=-90, textfont_size=10, cliponaxis=False)
-        fig_volume.update_layout(margin=dict(l=30, r=10, t=60, b=90), legend_orientation='h', legend_y=-0.25)
+    if modo_mobile:
+        # No celular: rótulos na vertical (leitura de baixo para cima)
+        fig_volume.update_traces(textposition='outside', textangle=-90, textfont_size=11, cliponaxis=False)
+        fig_volume.update_layout(margin=dict(l=30, r=10, t=70, b=120), legend_orientation='h', legend_y=-0.25)
     else:
-        fig_volume.update_traces(textposition='outside')
+        fig_volume.update_traces(textposition='outside', textfont_size=13)
+
+    fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
     st.plotly_chart(fig_volume, use_container_width=True)
     st.stop()
@@ -401,6 +448,8 @@ if total > 0:
         hovermode="x unified"
     )
 
+    fig = aplicar_estilo_plotly(fig, modo_mobile)
+
     st.plotly_chart(fig, use_container_width=True)
 
     # ... (código anterior do gráfico de linhas)
@@ -466,6 +515,7 @@ if total > 0:
     fig_bar_cd = px.bar(rank_cd, x='CD Origem', y='Até D+1', 
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                         color='Até D+1', color_continuous_scale='RdYlGn')
+    fig_bar_cd = aplicar_estilo_plotly(fig_bar_cd, modo_mobile)
     st.plotly_chart(fig_bar_cd, use_container_width=True)
 
     # 2. RANKING EMPRESAS
@@ -477,6 +527,7 @@ if total > 0:
     fig_bar_emp = px.bar(rank_emp, x='Empresa', y='Até D+1', 
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                          color='Até D+1', color_continuous_scale='RdYlGn')
+    fig_bar_emp = aplicar_estilo_plotly(fig_bar_emp, modo_mobile)
     st.plotly_chart(fig_bar_emp, use_container_width=True)
 
     # 3. RANKING CANAL DE ATUAÇÃO
@@ -488,6 +539,7 @@ if total > 0:
     fig_bar_canal = px.bar(rank_canal, x='Canal de Atuacao', y='Até D+1', 
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                            color='Até D+1', color_continuous_scale='RdYlGn')
+    fig_bar_canal = aplicar_estilo_plotly(fig_bar_canal, modo_mobile)
     st.plotly_chart(fig_bar_canal, use_container_width=True)
 
     # =============================
