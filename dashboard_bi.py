@@ -190,6 +190,44 @@ def load_data(path):
     df.columns = df.columns.str.strip()
 
     # =============================
+    # SANEAR CATEGORIAS (evita 'undefined' em qualquer gráfico/tabela)
+    # =============================
+    def _sanear_categoria(df_, col, valor_padrao='Não informado'):
+        if col not in df_.columns:
+            return df_
+        s = (df_[col]
+             .fillna(valor_padrao)
+             .astype(str)
+             .str.replace(' ', '', regex=False)
+             .str.strip()
+        )
+        # normaliza valores vazios e placeholders comuns
+        s = s.replace({
+            '': valor_padrao,
+            'nan': valor_padrao,
+            'NaN': valor_padrao,
+            'None': valor_padrao,
+            '<NA>': valor_padrao,
+            'undefined': valor_padrao,
+            'Undefined': valor_padrao,
+            'UNDEFINED': valor_padrao,
+        })
+        df_[col] = s
+        return df_
+
+    # Aplica para colunas que alimentam gráficos/filtros (não altera colunas numéricas)
+    for _c in ['CD Origem', 'Empresa', 'Canal de Atuacao', 'Canal', 'Operador', 'Unidade de Negocio']:
+        df = _sanear_categoria(df, _c)
+
+    # Mantém sigla PME em qualquer variação (aplica somente nas colunas de canal)
+    for _c in ['Canal de Atuacao', 'Canal']:
+        if _c in df.columns:
+            df[_c] = (df[_c]
+                .replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
+            )
+
+
+    # =============================
     # PADRONIZAÇÃO DE PEDIDO (SEM SEPARADOR DE MILHAR)
     # =============================
     # Garante que o ID do pedido fique como texto e sem formatação: 32310684
@@ -218,8 +256,8 @@ def load_data(path):
         if low in ['ecommerce', 'e-commerce', 'e commerce']: return 'Ecommerce'
         if low in ['loja propria', 'loja própria']: return 'Loja Própria'
         if low in ['agente autorizado', 'agentes autorizados', 'agente autorizados']: return 'Agente Autorizado'
-        
-        if low in ['pme', 'p.m.e', 'pme.']: return 'PME'  # mantém sigla# Title Case geral
+        if low in ['pme', 'p.m.e', 'pme.']: return 'PME'  # mantém sigla
+        # Title Case geral
         words = s.lower().split(' ')
         keep_lower = {'de','da','do','das','dos','e'}
         words2 = [w if w in keep_lower else w.capitalize() for w in words]
@@ -509,7 +547,17 @@ if total > 0:
     
     # 1. RANKING CD ORIGEM
     st.subheader("Ranking CD Origem Críticos (SLA Até D+1)")
-    rank_cd = base.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
+        # Segurança extra: evita categoria 'undefined' quando o campo está vazio/nulo
+    base_tmp = base.copy()
+    if 'CD Origem' in base_tmp.columns:
+        base_tmp['CD Origem'] = (base_tmp['CD Origem']
+            .fillna('Não informado')
+            .astype(str)
+            .str.replace('\u00A0', '', regex=False)
+            .str.strip()
+            .replace({'': 'Não informado','nan':'Não informado','None':'Não informado','<NA>':'Não informado','undefined':'Não informado','Undefined':'Não informado'})
+        )
+    rank_cd = base_tmp.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
     rank_cd['Até D+1'] = ((rank_cd['flag_d0']+rank_cd['flag_d1'])/rank_cd['Pedido']*100).round(2)
     rank_cd = rank_cd.sort_values('Até D+1')
     
@@ -521,7 +569,17 @@ if total > 0:
 
     # 2. RANKING EMPRESAS
     st.subheader("Ranking Empresas Críticos (SLA Até D+1)")
-    rank_emp = base.groupby('Empresa').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
+        # Segurança extra: evita categoria 'undefined' quando o campo está vazio/nulo
+    base_tmp = base.copy()
+    if 'Empresa' in base_tmp.columns:
+        base_tmp['Empresa'] = (base_tmp['Empresa']
+            .fillna('Não informado')
+            .astype(str)
+            .str.replace('\u00A0', '', regex=False)
+            .str.strip()
+            .replace({'': 'Não informado','nan':'Não informado','None':'Não informado','<NA>':'Não informado','undefined':'Não informado','Undefined':'Não informado'})
+        )
+    rank_emp = base_tmp.groupby('Empresa').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
     rank_emp['Até D+1'] = ((rank_emp['flag_d0']+rank_emp['flag_d1'])/rank_emp['Pedido']*100).round(2)
     rank_emp = rank_emp.sort_values('Até D+1')
     
@@ -533,18 +591,17 @@ if total > 0:
 
     # 3. RANKING CANAL DE ATUAÇÃO
     st.subheader("Ranking Canal de Atuação Críticos (SLA Até D+1)")
-        # Trata valores vazios/nulos para evitar categoria 'undefined' no gráfico
-    base_canal = base.copy()
-    if 'Canal de Atuacao' in base_canal.columns:
-        base_canal['Canal de Atuacao'] = (base_canal['Canal de Atuacao']
+        # Segurança extra: evita categoria 'undefined' quando o campo está vazio/nulo
+    base_tmp = base.copy()
+    if 'Canal de Atuacao' in base_tmp.columns:
+        base_tmp['Canal de Atuacao'] = (base_tmp['Canal de Atuacao']
             .fillna('Não informado')
             .astype(str)
+            .str.replace('\u00A0', '', regex=False)
             .str.strip()
-            .replace({'': 'Não informado', 'nan': 'Não informado', 'None': 'Não informado', '<NA>': 'Não informado'})
-            .replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
+            .replace({'': 'Não informado','nan':'Não informado','None':'Não informado','<NA>':'Não informado','undefined':'Não informado','Undefined':'Não informado'})
         )
-
-    rank_canal = base_canal.groupby('Canal de Atuacao').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
+    rank_canal = base_tmp.groupby('Canal de Atuacao').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
     rank_canal['Até D+1'] = ((rank_canal['flag_d0']+rank_canal['flag_d1'])/rank_canal['Pedido']*100).round(2)
     rank_canal = rank_canal.sort_values('Até D+1')
     
