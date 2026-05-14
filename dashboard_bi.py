@@ -198,10 +198,9 @@ def load_data(path):
         s = (df_[col]
              .fillna(valor_padrao)
              .astype(str)
-             .str.replace(' ', '', regex=False)
+             .str.replace(' ', '', regex=False)  # remove NBSP
              .str.strip()
         )
-        # normaliza valores vazios e placeholders comuns
         s = s.replace({
             '': valor_padrao,
             'nan': valor_padrao,
@@ -215,16 +214,14 @@ def load_data(path):
         df_[col] = s
         return df_
 
-    # Aplica para colunas que alimentam gráficos/filtros (não altera colunas numéricas)
+    # Aplica em colunas categóricas usadas em filtros e rankings
     for _c in ['CD Origem', 'Empresa', 'Canal de Atuacao', 'Canal', 'Operador', 'Unidade de Negocio']:
         df = _sanear_categoria(df, _c)
 
-    # Mantém sigla PME em qualquer variação (aplica somente nas colunas de canal)
+    # Mantém PME como sigla nas colunas de canal
     for _c in ['Canal de Atuacao', 'Canal']:
         if _c in df.columns:
-            df[_c] = (df[_c]
-                .replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
-            )
+            df[_c] = df[_c].replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
 
 
     # =============================
@@ -547,17 +544,7 @@ if total > 0:
     
     # 1. RANKING CD ORIGEM
     st.subheader("Ranking CD Origem Críticos (SLA Até D+1)")
-        # Segurança extra: evita categoria 'undefined' quando o campo está vazio/nulo
-    base_tmp = base.copy()
-    if 'CD Origem' in base_tmp.columns:
-        base_tmp['CD Origem'] = (base_tmp['CD Origem']
-            .fillna('Não informado')
-            .astype(str)
-            .str.replace('\u00A0', '', regex=False)
-            .str.strip()
-            .replace({'': 'Não informado','nan':'Não informado','None':'Não informado','<NA>':'Não informado','undefined':'Não informado','Undefined':'Não informado'})
-        )
-    rank_cd = base_tmp.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
+    rank_cd = base.groupby('CD Origem').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
     rank_cd['Até D+1'] = ((rank_cd['flag_d0']+rank_cd['flag_d1'])/rank_cd['Pedido']*100).round(2)
     rank_cd = rank_cd.sort_values('Até D+1')
     
@@ -569,17 +556,7 @@ if total > 0:
 
     # 2. RANKING EMPRESAS
     st.subheader("Ranking Empresas Críticos (SLA Até D+1)")
-        # Segurança extra: evita categoria 'undefined' quando o campo está vazio/nulo
-    base_tmp = base.copy()
-    if 'Empresa' in base_tmp.columns:
-        base_tmp['Empresa'] = (base_tmp['Empresa']
-            .fillna('Não informado')
-            .astype(str)
-            .str.replace('\u00A0', '', regex=False)
-            .str.strip()
-            .replace({'': 'Não informado','nan':'Não informado','None':'Não informado','<NA>':'Não informado','undefined':'Não informado','Undefined':'Não informado'})
-        )
-    rank_emp = base_tmp.groupby('Empresa').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
+    rank_emp = base.groupby('Empresa').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
     rank_emp['Até D+1'] = ((rank_emp['flag_d0']+rank_emp['flag_d1'])/rank_emp['Pedido']*100).round(2)
     rank_emp = rank_emp.sort_values('Até D+1')
     
@@ -591,17 +568,7 @@ if total > 0:
 
     # 3. RANKING CANAL DE ATUAÇÃO
     st.subheader("Ranking Canal de Atuação Críticos (SLA Até D+1)")
-        # Segurança extra: evita categoria 'undefined' quando o campo está vazio/nulo
-    base_tmp = base.copy()
-    if 'Canal de Atuacao' in base_tmp.columns:
-        base_tmp['Canal de Atuacao'] = (base_tmp['Canal de Atuacao']
-            .fillna('Não informado')
-            .astype(str)
-            .str.replace('\u00A0', '', regex=False)
-            .str.strip()
-            .replace({'': 'Não informado','nan':'Não informado','None':'Não informado','<NA>':'Não informado','undefined':'Não informado','Undefined':'Não informado'})
-        )
-    rank_canal = base_tmp.groupby('Canal de Atuacao').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
+    rank_canal = base.groupby('Canal de Atuacao').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
     rank_canal['Até D+1'] = ((rank_canal['flag_d0']+rank_canal['flag_d1'])/rank_canal['Pedido']*100).round(2)
     rank_canal = rank_canal.sort_values('Até D+1')
     
