@@ -31,6 +31,49 @@ def detectar_mobile() -> bool:
     return any(s in ua for s in sinais_mobile)
 
 
+
+
+def _corrigir_undefined_plotly(fig):
+    """Remove textos 'undefined' (Plotly/JS) em títulos de eixos/legenda/colorbar.
+
+    Em alguns cenários, o Plotly pode renderizar literalmente a palavra "undefined"
+    quando o título do eixo (ou de legenda/colorbar) está ausente/None.
+    Esta função limpa isso sem alterar os dados.
+    """
+    try:
+        # Eixos (xaxis, xaxis2, yaxis, yaxis2, ...)
+        for k in fig.layout:
+            if str(k).startswith('xaxis') or str(k).startswith('yaxis'):
+                ax = fig.layout[k]
+                try:
+                    t = ax.title.text
+                    if t is None or str(t).strip().lower() == 'undefined':
+                        ax.title.text = ''
+                except Exception:
+                    pass
+
+        # Título da legenda
+        try:
+            lt = fig.layout.legend.title.text
+            if lt is None or str(lt).strip().lower() == 'undefined':
+                fig.layout.legend.title.text = ''
+        except Exception:
+            pass
+
+        # Colorbar (quando usa escala contínua)
+        try:
+            ca = fig.layout.coloraxis
+            if ca and ca.colorbar and ca.colorbar.title:
+                ct = ca.colorbar.title.text
+                if ct is None or str(ct).strip().lower() == 'undefined':
+                    ca.colorbar.title.text = ''
+        except Exception:
+            pass
+
+    except Exception:
+        pass
+
+    return fig
 def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     """Ajusta fontes do Plotly para melhor legibilidade e proporção."""
     # Fontes base (maiores no desktop; no celular mantém legível sem estourar layout)
@@ -190,7 +233,7 @@ def load_data(path):
     df.columns = df.columns.str.strip()
 
     # =============================
-    # SANEAR CATEGORIAS (evita 'undefined' em qualquer gráfico/tabela)
+    # SANEAR CATEGORIAS (evita categorias vazias e a palavra 'undefined' em rankings)
     # =============================
     def _sanear_categoria(df_, col, valor_padrao='Não informado'):
         if col not in df_.columns:
@@ -214,11 +257,10 @@ def load_data(path):
         df_[col] = s
         return df_
 
-    # Aplica em colunas categóricas usadas em filtros e rankings
     for _c in ['CD Origem', 'Empresa', 'Canal de Atuacao', 'Canal', 'Operador', 'Unidade de Negocio']:
         df = _sanear_categoria(df, _c)
 
-    # Mantém PME como sigla nas colunas de canal
+    # PME como sigla nas colunas de canal
     for _c in ['Canal de Atuacao', 'Canal']:
         if _c in df.columns:
             df[_c] = df[_c].replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
