@@ -419,6 +419,8 @@ if aba == "📦 Volumetria de Pedidos":
         category_orders=cat_orders
     )
 
+    # Padrão dos rankings: rótulos dentro da barra, no topo, na vertical (de baixo para cima)
+    fig_volume.update_traces(textposition='inside', textangle=-90, insidetextanchor='end', cliponaxis=False)
     fig_volume.update_layout(
         height=(650 if modo_mobile else 560),
         title_x=0.0,
@@ -435,7 +437,7 @@ if aba == "📦 Volumetria de Pedidos":
 
     fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
-    st.plotly_chart(fig_volume, use_container_width=True)
+    st.plotly_chart(fig_volume, use_container_width=True, theme=None)
     st.stop()
 
 
@@ -612,7 +614,7 @@ if total > 0:
     try:
         fig_bar_cd.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
+        fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_cd.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -632,7 +634,7 @@ if total > 0:
     try:
         fig_bar_emp.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
+        fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_emp.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -652,7 +654,7 @@ if total > 0:
     try:
         fig_bar_canal.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
+        fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_canal.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
