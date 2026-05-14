@@ -140,7 +140,7 @@ check_password()
 # =============================
 from datetime import timedelta
 
-st.title("Dashboard SLA Separação e Faturamento")
+st.title("Dashboard Separação e Faturamento")
 # Ajusta para o horário de Brasília (UTC-3)
 horario_brasilia = datetime.now() - timedelta(hours=3)
 st.caption(f"Atualizado em {horario_brasilia.strftime('%d/%m/%Y %H:%M')}")
@@ -435,7 +435,7 @@ if aba == "📦 Volumetria de Pedidos":
 
     fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
-    st.plotly_chart(fig_volume, use_container_width=True, theme=None)
+    st.plotly_chart(fig_volume, use_container_width=True)
     st.stop()
 
 
@@ -529,8 +529,21 @@ if total > 0:
 
     fig = aplicar_estilo_plotly(fig, modo_mobile)
 
-    st.plotly_chart(fig, use_container_width=True, theme=None)
+    # Ajuste pontual: evita cortar os rótulos (%) no topo do gráfico de linhas
 
+    try:
+
+        fig.update_traces(cliponaxis=False)
+
+        fig.update_yaxes(range=[0, 105])
+
+        fig.update_layout(margin=dict(t=90))
+
+    except Exception:
+
+        pass
+
+    st.plotly_chart(fig, use_container_width=True)
     # ... (código anterior do gráfico de linhas)
 
     # TABELA DE RESUMO (SLA E METAS)
@@ -595,8 +608,16 @@ if total > 0:
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                         color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_cd = aplicar_estilo_plotly(fig_bar_cd, modo_mobile)
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
+    try:
+        fig_bar_cd.update_traces(cliponaxis=False)
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_cd.update_traces(textposition='inside', insidetextanchor='end')
+        # Evita que títulos automáticos virem 'undefined' no render
+        fig_bar_cd.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+    except Exception:
+        pass
     st.plotly_chart(fig_bar_cd, use_container_width=True, theme=None)
-
     # 2. RANKING EMPRESAS
     st.subheader("Ranking Empresas Críticos (SLA Até D+1)")
     rank_emp = base.groupby('Empresa').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
@@ -607,8 +628,16 @@ if total > 0:
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                          color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_emp = aplicar_estilo_plotly(fig_bar_emp, modo_mobile)
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
+    try:
+        fig_bar_emp.update_traces(cliponaxis=False)
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_emp.update_traces(textposition='inside', insidetextanchor='end')
+        # Evita que títulos automáticos virem 'undefined' no render
+        fig_bar_emp.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+    except Exception:
+        pass
     st.plotly_chart(fig_bar_emp, use_container_width=True, theme=None)
-
     # 3. RANKING CANAL DE ATUAÇÃO
     st.subheader("Ranking Canal de Atuação Críticos (SLA Até D+1)")
     rank_canal = base.groupby('Canal de Atuacao').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
@@ -619,8 +648,16 @@ if total > 0:
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                            color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_canal = aplicar_estilo_plotly(fig_bar_canal, modo_mobile)
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
+    try:
+        fig_bar_canal.update_traces(cliponaxis=False)
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_canal.update_traces(textposition='inside', insidetextanchor='end')
+        # Evita que títulos automáticos virem 'undefined' no render
+        fig_bar_canal.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+    except Exception:
+        pass
     st.plotly_chart(fig_bar_canal, use_container_width=True, theme=None)
-
     # =============================
     # TABELA DE DETALHAMENTO FINAL
     # =============================
