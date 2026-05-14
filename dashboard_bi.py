@@ -89,7 +89,6 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
         xaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
         yaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
     )
-    fig = _corrigir_undefined_plotly(fig)
     return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
@@ -435,7 +434,7 @@ if aba == "📦 Volumetria de Pedidos":
 
     fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
-    st.plotly_chart(fig_volume, use_container_width=True, theme=None)
+    st.plotly_chart(fig_volume, use_container_width=True)
     st.stop()
 
 
@@ -529,7 +528,14 @@ if total > 0:
 
     fig = aplicar_estilo_plotly(fig, modo_mobile)
 
-    st.plotly_chart(fig, use_container_width=True, theme=None)
+    # Ajuste pontual: evita cortar os rótulos (%) no topo do gráfico de linhas
+    try:
+        fig.update_traces(cliponaxis=False)
+        fig.update_yaxes(range=[0, 105])
+        fig.update_layout(margin=dict(t=90))
+    except Exception:
+        pass
+    st.plotly_chart(fig, use_container_width=True)
 
     # ... (código anterior do gráfico de linhas)
 
@@ -595,7 +601,12 @@ if total > 0:
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                         color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_cd = aplicar_estilo_plotly(fig_bar_cd, modo_mobile)
-    st.plotly_chart(fig_bar_cd, use_container_width=True, theme=None)
+    # Ajuste simples: inverter posição das % (rótulos) para dentro das barras
+    try:
+        fig_bar_cd.update_traces(textposition='inside', insidetextanchor='middle')
+    except Exception:
+        pass
+    st.plotly_chart(fig_bar_cd, use_container_width=True)
 
     # 2. RANKING EMPRESAS
     st.subheader("Ranking Empresas Críticos (SLA Até D+1)")
@@ -607,7 +618,12 @@ if total > 0:
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                          color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_emp = aplicar_estilo_plotly(fig_bar_emp, modo_mobile)
-    st.plotly_chart(fig_bar_emp, use_container_width=True, theme=None)
+    # Ajuste simples: inverter posição das % (rótulos) para dentro das barras
+    try:
+        fig_bar_emp.update_traces(textposition='inside', insidetextanchor='middle')
+    except Exception:
+        pass
+    st.plotly_chart(fig_bar_emp, use_container_width=True)
 
     # 3. RANKING CANAL DE ATUAÇÃO
     st.subheader("Ranking Canal de Atuação Críticos (SLA Até D+1)")
@@ -619,7 +635,12 @@ if total > 0:
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                            color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_canal = aplicar_estilo_plotly(fig_bar_canal, modo_mobile)
-    st.plotly_chart(fig_bar_canal, use_container_width=True, theme=None)
+    # Ajuste simples: inverter posição das % (rótulos) para dentro das barras
+    try:
+        fig_bar_canal.update_traces(textposition='inside', insidetextanchor='middle')
+    except Exception:
+        pass
+    st.plotly_chart(fig_bar_canal, use_container_width=True)
 
     # =============================
     # TABELA DE DETALHAMENTO FINAL
