@@ -612,7 +612,7 @@ if total > 0:
     try:
         fig_bar_cd.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_cd.update_traces(textposition='inside', insidetextanchor='end')
+        fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_cd.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -632,7 +632,7 @@ if total > 0:
     try:
         fig_bar_emp.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_emp.update_traces(textposition='inside', insidetextanchor='end')
+        fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_emp.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -652,7 +652,7 @@ if total > 0:
     try:
         fig_bar_canal.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_canal.update_traces(textposition='inside', insidetextanchor='end')
+        fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_canal.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
