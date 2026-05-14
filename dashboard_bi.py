@@ -89,6 +89,7 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
         xaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
         yaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
     )
+    fig = _corrigir_undefined_plotly(fig)
     return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
@@ -434,7 +435,7 @@ if aba == "📦 Volumetria de Pedidos":
 
     fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
-    st.plotly_chart(fig_volume, use_container_width=True)
+    st.plotly_chart(fig_volume, use_container_width=True, theme=None)
     st.stop()
 
 
@@ -528,14 +529,7 @@ if total > 0:
 
     fig = aplicar_estilo_plotly(fig, modo_mobile)
 
-    # Ajuste: evita cortar rótulos (%) no topo
-    try:
-        fig.update_traces(cliponaxis=False)
-        fig.update_yaxes(range=[0, 105])
-        fig.update_layout(margin=dict(t=80))
-    except Exception:
-        pass
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, theme=None)
 
     # ... (código anterior do gráfico de linhas)
 
@@ -601,18 +595,7 @@ if total > 0:
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                         color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_cd = aplicar_estilo_plotly(fig_bar_cd, modo_mobile)
-    # Ajuste: evita cortar % e melhora posição do texto no modo vertical
-    try:
-        fig_bar_cd.update_traces(cliponaxis=False)
-        fig_bar_cd.update_yaxes(range=[0, 105])
-        fig_bar_cd.update_layout(margin=dict(t=80))
-        if modo_mobile:
-            fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
-        else:
-            fig_bar_cd.update_traces(textposition='outside')
-    except Exception:
-        pass
-    st.plotly_chart(fig_bar_cd, use_container_width=True)
+    st.plotly_chart(fig_bar_cd, use_container_width=True, theme=None)
 
     # 2. RANKING EMPRESAS
     st.subheader("Ranking Empresas Críticos (SLA Até D+1)")
@@ -624,18 +607,7 @@ if total > 0:
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                          color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_emp = aplicar_estilo_plotly(fig_bar_emp, modo_mobile)
-    # Ajuste: evita cortar % e melhora posição do texto no modo vertical
-    try:
-        fig_bar_emp.update_traces(cliponaxis=False)
-        fig_bar_emp.update_yaxes(range=[0, 105])
-        fig_bar_emp.update_layout(margin=dict(t=80))
-        if modo_mobile:
-            fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
-        else:
-            fig_bar_emp.update_traces(textposition='outside')
-    except Exception:
-        pass
-    st.plotly_chart(fig_bar_emp, use_container_width=True)
+    st.plotly_chart(fig_bar_emp, use_container_width=True, theme=None)
 
     # 3. RANKING CANAL DE ATUAÇÃO
     st.subheader("Ranking Canal de Atuação Críticos (SLA Até D+1)")
@@ -647,18 +619,7 @@ if total > 0:
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                            color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_canal = aplicar_estilo_plotly(fig_bar_canal, modo_mobile)
-    # Ajuste: evita cortar % e melhora posição do texto no modo vertical
-    try:
-        fig_bar_canal.update_traces(cliponaxis=False)
-        fig_bar_canal.update_yaxes(range=[0, 105])
-        fig_bar_canal.update_layout(margin=dict(t=80))
-        if modo_mobile:
-            fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
-        else:
-            fig_bar_canal.update_traces(textposition='outside')
-    except Exception:
-        pass
-    st.plotly_chart(fig_bar_canal, use_container_width=True)
+    st.plotly_chart(fig_bar_canal, use_container_width=True, theme=None)
 
     # =============================
     # TABELA DE DETALHAMENTO FINAL
