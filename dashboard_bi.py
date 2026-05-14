@@ -7,26 +7,86 @@ from datetime import datetime, date
 import os
 
 
+
+
+# =============================
+# DETECÇÃO AUTOMÁTICA DE CELULAR + AJUSTES DE FONTE (PLOTLY)
+# =============================
+
+def detectar_mobile() -> bool:
+    """Detecta acesso via celular/tablet pelo User-Agent.
+
+    Usa st.context.headers quando disponível.
+    Se st.context não existir/der erro, retorna False.
+    """
+    try:
+        ua = str(st.context.headers.get("user-agent", "")).lower()
+    except Exception:
+        return False
+
+    sinais_mobile = [
+        "android", "iphone", "ipad", "ipod", "mobile",
+        "windows phone", "opera mini", "blackberry",
+    ]
+    return any(s in ua for s in sinais_mobile)
+
+
+def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
+    """Ajusta fontes do Plotly para melhor legibilidade e proporção."""
+    # Fontes base (maiores no desktop; no celular mantém legível sem estourar layout)
+    font_base = 16 if not modo_mobile else 13
+    font_axis = 14 if not modo_mobile else 12
+    font_legend = 14 if not modo_mobile else 12
+    font_title = 22 if not modo_mobile else 18
+
+    fig.update_layout(
+        font=dict(size=font_base),
+        title_font=dict(size=font_title),
+        legend=dict(font=dict(size=font_legend)),
+        xaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
+        yaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
+    )
+    return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
 # LOGIN (Mantido conforme original)
 # =============================
 def check_password():
+    """Login simples e robusto.
+
+    Evita KeyError em cenários comuns no celular (reconexão do WebSocket,
+    aba "dormindo", troca de rede), onde o session_state pode reiniciar
+    sem a chave 'password'.
+    """
+
+    # Inicializa as chaves para evitar KeyError
+    if "password" not in st.session_state:
+        st.session_state["password"] = ""
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
     def password_entered():
-        if st.session_state["password"] == "claro2026":
+        if st.session_state.get("password", "") == "claro2026":
             st.session_state["password_correct"] = True
-            del st.session_state["password"]
+            # Não deletar a chave (evita KeyError após reconexões no mobile)
+            st.session_state["password"] = ""
         else:
             st.session_state["password_correct"] = False
-    
-    if "password_correct" not in st.session_state:
+
+    if not st.session_state.get("password_correct", False):
         st.title("🔒 Acesso Restrito")
-        st.text_input("Digite a senha", type="password", on_change=password_entered, key="password")
-        st.stop()
-    elif not st.session_state["password_correct"]:
-        st.text_input("Digite a senha", type="password", on_change=password_entered, key="password")
-        st.error("Senha incorreta")
+        st.text_input(
+            "Digite a senha",
+            type="password",
+            on_change=password_entered,
+            key="password",
+        )
+
+        # Mostra erro somente depois que o usuário tentar
+        if st.session_state.get("password", "") != "" and not st.session_state.get("password_correct", False):
+            st.error("Senha incorreta")
+
         st.stop()
 
 check_password()
@@ -158,8 +218,8 @@ def load_data(path):
         if low in ['ecommerce', 'e-commerce', 'e commerce']: return 'Ecommerce'
         if low in ['loja propria', 'loja própria']: return 'Loja Própria'
         if low in ['agente autorizado', 'agentes autorizados', 'agente autorizados']: return 'Agente Autorizado'
-        if low in ['pme', 'p.m.e', 'pme.']: return 'PME'  # mantém sigla
-        # Title Case geral
+        
+        if low in ['pme', 'p.m.e', 'pme.']: return 'PME'  # mantém sigla# Title Case geral
         words = s.lower().split(' ')
         keep_lower = {'de','da','do','das','dos','e'}
         words2 = [w if w in keep_lower else w.capitalize() for w in words]
@@ -176,14 +236,6 @@ def load_data(path):
         return df_
     
     df = _padronizar_coluna(df, 'Canal de Atuacao')
-    if 'Canal de Atuacao' in df.columns:
-        df['Canal de Atuacao'] = (df['Canal de Atuacao']
-            .replace({'Pme':'PME', 'pme':'PME', 'PME':'PME'})
-            .fillna('Não informado')
-            .astype(str)
-            .str.strip()
-            .replace({'': 'Não informado', 'nan': 'Não informado', 'None': 'Não informado', '<NA>': 'Não informado'})
-        )
     df = _padronizar_coluna(df, 'Canal')
     
     # CORREÇÃO DATA 1970: Converte números seriais do Excel para data real
@@ -220,7 +272,11 @@ with st.sidebar:
         st.image("logo_claro.png", use_container_width=True)
 
     # 📱 Modo celular: melhora a leitura (rótulos dos valores na vertical)
-    modo_mobile = st.checkbox('📱 Modo celular (evitar números sobrepostos)', value=False)
+    # 📱 Modo celular (automático via User-Agent, com opção de override)
+    auto_mobile = detectar_mobile()
+    if 'modo_mobile' not in st.session_state:
+        st.session_state['modo_mobile'] = auto_mobile
+    modo_mobile = st.checkbox('📱 Modo celular (auto)', key='modo_mobile', help='Ativado automaticamente quando detectado acesso por celular. Desmarque para forçar modo desktop.')
 
     
     aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos"], horizontal=True)
@@ -286,17 +342,20 @@ if aba == "📦 Volumetria de Pedidos":
     )
 
     fig_volume.update_layout(
-        height=550,
+        height=(650 if modo_mobile else 560),
         title_x=0.0,
         xaxis_title='Canal de Atuação',
         yaxis_title='',
         legend_title_text='Mês'
     )
-    if 'modo_mobile' in globals() and modo_mobile:
-        fig_volume.update_traces(textposition='outside', textangle=90, textfont_size=10, cliponaxis=False)
-        fig_volume.update_layout(margin=dict(l=30, r=10, t=60, b=90), legend_orientation='h', legend_y=-0.25)
+    if modo_mobile:
+        # No celular: rótulos na vertical (leitura de baixo para cima)
+        fig_volume.update_traces(textposition='outside', textangle=-90, textfont_size=11, cliponaxis=False)
+        fig_volume.update_layout(margin=dict(l=30, r=10, t=70, b=120), legend_orientation='h', legend_y=-0.25)
     else:
-        fig_volume.update_traces(textposition='outside')
+        fig_volume.update_traces(textposition='outside', textfont_size=13)
+
+    fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
     st.plotly_chart(fig_volume, use_container_width=True)
     st.stop()
@@ -390,6 +449,8 @@ if total > 0:
         hovermode="x unified"
     )
 
+    fig = aplicar_estilo_plotly(fig, modo_mobile)
+
     st.plotly_chart(fig, use_container_width=True)
 
     # ... (código anterior do gráfico de linhas)
@@ -455,6 +516,7 @@ if total > 0:
     fig_bar_cd = px.bar(rank_cd, x='CD Origem', y='Até D+1', 
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                         color='Até D+1', color_continuous_scale='RdYlGn')
+    fig_bar_cd = aplicar_estilo_plotly(fig_bar_cd, modo_mobile)
     st.plotly_chart(fig_bar_cd, use_container_width=True)
 
     # 2. RANKING EMPRESAS
@@ -466,11 +528,12 @@ if total > 0:
     fig_bar_emp = px.bar(rank_emp, x='Empresa', y='Até D+1', 
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                          color='Até D+1', color_continuous_scale='RdYlGn')
+    fig_bar_emp = aplicar_estilo_plotly(fig_bar_emp, modo_mobile)
     st.plotly_chart(fig_bar_emp, use_container_width=True)
 
     # 3. RANKING CANAL DE ATUAÇÃO
     st.subheader("Ranking Canal de Atuação Críticos (SLA Até D+1)")
-    # Trata valores vazios/nulos para evitar categoria 'undefined' no gráfico
+        # Trata valores vazios/nulos para evitar categoria 'undefined' no gráfico
     base_canal = base.copy()
     if 'Canal de Atuacao' in base_canal.columns:
         base_canal['Canal de Atuacao'] = (base_canal['Canal de Atuacao']
@@ -478,6 +541,7 @@ if total > 0:
             .astype(str)
             .str.strip()
             .replace({'': 'Não informado', 'nan': 'Não informado', 'None': 'Não informado', '<NA>': 'Não informado'})
+            .replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
         )
 
     rank_canal = base_canal.groupby('Canal de Atuacao').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
@@ -487,6 +551,7 @@ if total > 0:
     fig_bar_canal = px.bar(rank_canal, x='Canal de Atuacao', y='Até D+1', 
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                            color='Até D+1', color_continuous_scale='RdYlGn')
+    fig_bar_canal = aplicar_estilo_plotly(fig_bar_canal, modo_mobile)
     st.plotly_chart(fig_bar_canal, use_container_width=True)
 
     # =============================
