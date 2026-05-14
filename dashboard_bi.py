@@ -89,6 +89,7 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
         xaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
         yaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
     )
+    fig = _corrigir_undefined_plotly(fig)
     return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
@@ -139,7 +140,7 @@ check_password()
 # =============================
 from datetime import timedelta
 
-st.title("Dashboard SLA Separação e Faturamento")
+st.title("Dashboard Separação e Faturamento")
 # Ajusta para o horário de Brasília (UTC-3)
 horario_brasilia = datetime.now() - timedelta(hours=3)
 st.caption(f"Atualizado em {horario_brasilia.strftime('%d/%m/%Y %H:%M')}")
@@ -407,92 +408,15 @@ if aba == "📦 Volumetria de Pedidos":
     ordem_meses = sorted(meses_selecionados, key=lambda x: datetime.strptime(x, '%m/%Y')) if meses_selecionados else None
     cat_orders = {'Mes_Ano': ordem_meses} if ordem_meses else None
 
-# Layout da Volumetria no mesmo modelo dos rankings
-
-if len(meses_selecionados) == 1:
-
-    # 1 mês: cor contínua por Volume (com colorbar)
-
     fig_volume = px.bar(
-
         vol,
-
         x=col_canal,
-
         y='Volume',
-
-        color='Volume',
-
-        color_continuous_scale='Blues',
-
-        text='Volume',
-
-        title='VOLUMETRIA DE PEDIDOS',
-
-        category_orders=cat_orders
-
-    )
-
-    fig_volume.update_traces(textposition='inside', insidetextanchor='end', cliponaxis=False)
-
-    fig_volume.update_layout(
-
-        height=550,
-
-        title_x=0.0,
-
-        xaxis_title='',
-
-        yaxis_title='Volume',
-
-        legend_title_text='',
-
-        coloraxis_colorbar_title_text='Volume',
-
-        margin=dict(t=90)
-
-    )
-
-else:
-
-    # Múltiplos meses: mantém agrupado por mês (legenda), mas com layout consistente
-
-    fig_volume = px.bar(
-
-        vol,
-
-        x=col_canal,
-
-        y='Volume',
-
         color='Mes_Ano',
-
         barmode='group',
-
         text='Volume',
-
         title='VOLUMETRIA DE PEDIDOS',
-
         category_orders=cat_orders
-
-    )
-
-    fig_volume.update_traces(textposition='inside', insidetextanchor='end', cliponaxis=False)
-
-    fig_volume.update_layout(
-
-        height=550,
-
-        title_x=0.0,
-
-        xaxis_title='',
-
-        yaxis_title='Volume',
-
-        legend_title_text='Mês',
-
-        margin=dict(t=90)
-
     )
 
     fig_volume.update_layout(
@@ -511,7 +435,7 @@ else:
 
     fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
-    st.plotly_chart(fig_volume, use_container_width=True, theme=None)
+    st.plotly_chart(fig_volume, use_container_width=True)
     st.stop()
 
 
@@ -605,8 +529,21 @@ if total > 0:
 
     fig = aplicar_estilo_plotly(fig, modo_mobile)
 
-    st.plotly_chart(fig, use_container_width=True)
+    # Ajuste pontual: evita cortar os rótulos (%) no topo do gráfico de linhas
 
+    try:
+
+        fig.update_traces(cliponaxis=False)
+
+        fig.update_yaxes(range=[0, 105])
+
+        fig.update_layout(margin=dict(t=90))
+
+    except Exception:
+
+        pass
+
+    st.plotly_chart(fig, use_container_width=True)
     # ... (código anterior do gráfico de linhas)
 
     # TABELA DE RESUMO (SLA E METAS)
@@ -671,11 +608,12 @@ if total > 0:
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                         color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_cd = aplicar_estilo_plotly(fig_bar_cd, modo_mobile)
-    # Ajuste: rótulo (%) na vertical (leitura de baixo para cima) + evita 'undefined'
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
     try:
         fig_bar_cd.update_traces(cliponaxis=False)
-        fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
-        # evita títulos automáticos renderizarem como 'undefined'
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_cd.update_traces(textposition='inside', insidetextanchor='end')
+        # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_cd.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
         pass
@@ -690,11 +628,12 @@ if total > 0:
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                          color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_emp = aplicar_estilo_plotly(fig_bar_emp, modo_mobile)
-    # Ajuste: rótulo (%) na vertical (leitura de baixo para cima) + evita 'undefined'
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
     try:
         fig_bar_emp.update_traces(cliponaxis=False)
-        fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
-        # evita títulos automáticos renderizarem como 'undefined'
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_emp.update_traces(textposition='inside', insidetextanchor='end')
+        # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_emp.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
         pass
@@ -709,11 +648,12 @@ if total > 0:
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                            color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_canal = aplicar_estilo_plotly(fig_bar_canal, modo_mobile)
-    # Ajuste: rótulo (%) na vertical (leitura de baixo para cima) + evita 'undefined'
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
     try:
         fig_bar_canal.update_traces(cliponaxis=False)
-        fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='start')
-        # evita títulos automáticos renderizarem como 'undefined'
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_canal.update_traces(textposition='inside', insidetextanchor='end')
+        # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_canal.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
         pass
