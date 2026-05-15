@@ -93,104 +93,51 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     return fig
 
 
-def aplicar_rotulos_percentuais_barras(fig, limiar_outside=15.0, tamanho_padrao=12, angulo_vertical=90):
-    """Padroniza rótulos (%) em gráficos de colunas (rankings) conforme os prints.
+def aplicar_rotulos_percentuais_barras(fig, limiar_outside=15.0, tamanho_padrao=12):
+    """Padroniza rótulos (%) em gráficos de colunas (rankings).
 
-    1) Padrão (normal) — barras >= limiar_outside:
-       - % dentro da barra
-       - no topo
-       - vertical (cima → baixo) (angulo_vertical)
-       - tamanho padrão
+    Regra solicitada:
+      - Quando o rótulo ficar "fora do padrão" (normalmente barras pequenas), NÃO mostra % dentro da barra.
+        Nesse caso, o texto vai PARA FORA no topo (horizontal, tamanho padrão).
+      - Para as demais barras, mantém o padrão: % DENTRO da barra, no topo, na vertical (leitura de baixo para cima).
 
-    2) Fora do padrão (tipo Telmex / barra pequena) — barras < limiar_outside:
-       - NÃO mostra % dentro
-       - rótulo fora da barra
-       - no topo
-       - horizontal
-       - tamanho padrão
-       - com folga no eixo Y para não cortar
-
-    Nota técnica:
-      Em algumas combinações Streamlit+Plotly, o texto dentro da barra pode ser suprimido/autoajustado.
-      Para garantir que o rótulo SEMPRE apareça, desenhamos os rótulos como traces do tipo Scatter (mode='text').
+    Obs.: Como Plotly não informa diretamente quando ele reduz a fonte, usamos uma regra robusta por valor:
+          valores abaixo de `limiar_outside` vão para fora.
     """
     try:
-        # Folga para rótulos "outside" e para não cortar
+        # Evita corte de texto e dá folga no topo
         fig.update_traces(cliponaxis=False)
-        fig.update_layout(margin=dict(t=90))
         try:
             fig.update_yaxes(range=[0, 105])
         except Exception:
             pass
+        fig.update_layout(margin=dict(t=90))
 
-        novas_traces = []
-
-        for tr in list(fig.data):
+        # Força o texto sempre no formato 88% (número antes do %)
+        for tr in fig.data:
             if getattr(tr, 'type', None) != 'bar':
                 continue
-            if tr.y is None or tr.x is None:
+            if tr.y is None:
                 continue
-
             y_vals = [float(v) for v in tr.y]
-            x_vals = list(tr.x)
-            textos = [f"{v:.2f}%" for v in y_vals]
+            tr.text = [f"{v:.2f}%" for v in y_vals]
 
-            # Remove o texto do trace de barra para não duplicar nem aparecer dentro quando for pequeno
-            tr.text = None
+            # Fora do padrão -> outside, horizontal; padrão -> inside, vertical
+            tr.textposition = ['outside' if v < limiar_outside else 'inside' for v in y_vals]
+            tr.textangle = [0 if v < limiar_outside else 90 for v in y_vals]
 
-            small_idx = [i for i, v in enumerate(y_vals) if v < limiar_outside]
-            norm_idx  = [i for i, v in enumerate(y_vals) if v >= limiar_outside]
+            # Dentro da barra, topo (como no print)
+            tr.insidetextanchor = 'end'
 
-            # Fora (pequenos): fora da barra, no topo, horizontal (preto)
-            if small_idx:
-                xs = [x_vals[i] for i in small_idx]
-                ys = [y_vals[i] for i in small_idx]
-                ts = [textos[i] for i in small_idx]
-                novas_traces.append(go.Scatter(
-                    x=xs,
-                    y=ys,
-                    mode='text',
-                    text=ts,
-                    textposition='top center',
-                    textangle=0,
-                    textfont=dict(size=tamanho_padrao, color='#111111'),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
+            # Mantém tamanho padrão do texto
+            tr.textfont = dict(size=tamanho_padrao)
 
-            # Dentro (normais): dentro da barra, próximo ao topo, vertical (branco)
-            if norm_idx:
-                xs = [x_vals[i] for i in norm_idx]
-                ys = []
-                for i in norm_idx:
-                    v = y_vals[i]
-                    # offset pequeno para ficar dentro e no topo, como no print
-                    offset = max(0.8, v * 0.03)  # 3% da barra (mín 0.8 p.p.)
-                    ys.append(v - offset)
-                ts = [textos[i] for i in norm_idx]
-                novas_traces.append(go.Scatter(
-                    x=xs,
-                    y=ys,
-                    mode='text',
-                    text=ts,
-                    textposition='middle center',
-                    textangle=angulo_vertical,
-                    textfont=dict(size=tamanho_padrao, color='white'),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
-
-        for nt in novas_traces:
-            fig.add_trace(nt)
-
-        # Evita títulos automáticos renderizarem como 'undefined'
+        # Remove títulos automáticos que podem renderizar como 'undefined'
         fig.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
 
     except Exception:
         pass
-
     return fig
-
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
