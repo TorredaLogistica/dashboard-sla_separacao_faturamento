@@ -91,93 +91,6 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     )
     fig = _corrigir_undefined_plotly(fig)
     return fig
-
-
-def aplicar_rotulos_percentuais_barras(fig, limiar_outside=15.0, tamanho_padrao=12, angulo_vertical=-90):
-    """Padroniza rótulos (%) em gráficos de colunas (rankings).
-
-    - Barras normais (>= limiar_outside): rótulo DENTRO, no topo, vertical (angulo_vertical), tamanho padrão.
-    - Barras pequenas (< limiar_outside): rótulo FORA, no topo, horizontal, tamanho padrão.
-
-    Implementação robusta: desenha rótulos como Scatter(text) para evitar limitações do textangle em barras.
-    """
-    try:
-        # Folga para evitar corte dos rótulos fora do topo
-        fig.update_layout(margin=dict(t=95))
-        try:
-            fig.update_yaxes(range=[0, 110])
-        except Exception:
-            pass
-
-        novas_traces = []
-
-        for tr in list(fig.data):
-            if getattr(tr, 'type', None) != 'bar':
-                continue
-            if tr.y is None or tr.x is None:
-                continue
-
-            y_vals = [float(v) for v in tr.y]
-            x_vals = list(tr.x)
-            textos = [f"{v:.2f}%" for v in y_vals]
-
-            # remove texto do trace original para não duplicar
-            tr.text = None
-
-            small_idx = [i for i, v in enumerate(y_vals) if v < limiar_outside]
-            norm_idx  = [i for i, v in enumerate(y_vals) if v >= limiar_outside]
-
-            # Pequenas: fora, topo, horizontal
-            if small_idx:
-                xs = [x_vals[i] for i in small_idx]
-                ys = [y_vals[i] + 1.0 for i in small_idx]  # pequeno offset para ficar acima
-                ts = [textos[i] for i in small_idx]
-                novas_traces.append(go.Scatter(
-                    x=xs,
-                    y=ys,
-                    mode='text',
-                    text=ts,
-                    textposition='top center',
-                    textangle=0,
-                    textfont=dict(size=tamanho_padrao, color='#111111'),
-                    showlegend=False,
-                    hoverinfo='skip',
-                    cliponaxis=False,
-                ))
-
-            # Normais: dentro, perto do topo, vertical
-            if norm_idx:
-                xs = [x_vals[i] for i in norm_idx]
-                ys = []
-                for i in norm_idx:
-                    v = y_vals[i]
-                    offset = max(0.8, v * 0.03)  # dentro e próximo ao topo
-                    ys.append(v - offset)
-                ts = [textos[i] for i in norm_idx]
-                novas_traces.append(go.Scatter(
-                    x=xs,
-                    y=ys,
-                    mode='text',
-                    text=ts,
-                    textposition='middle center',
-                    textangle=angulo_vertical,
-                    textfont=dict(size=tamanho_padrao, color='white'),
-                    showlegend=False,
-                    hoverinfo='skip',
-                    cliponaxis=False,
-                ))
-
-        for nt in novas_traces:
-            fig.add_trace(nt)
-
-        # Evita títulos automáticos renderizarem como 'undefined'
-        fig.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
-
-    except Exception:
-        pass
-
-    return fig
-
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
@@ -506,6 +419,8 @@ if aba == "📦 Volumetria de Pedidos":
         category_orders=cat_orders
     )
 
+    # Padrão dos rankings: rótulos dentro da barra, no topo, na vertical (de baixo para cima)
+    fig_volume.update_traces(textposition='inside', textangle=-90, insidetextanchor='end', cliponaxis=False)
     fig_volume.update_layout(
         height=(650 if modo_mobile else 560),
         title_x=0.0,
@@ -522,7 +437,7 @@ if aba == "📦 Volumetria de Pedidos":
 
     fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
-    st.plotly_chart(fig_volume, use_container_width=True)
+    st.plotly_chart(fig_volume, use_container_width=True, theme=None)
     st.stop()
 
 
@@ -695,7 +610,15 @@ if total > 0:
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                         color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_cd = aplicar_estilo_plotly(fig_bar_cd, modo_mobile)
-    fig_bar_cd = aplicar_rotulos_percentuais_barras(fig_bar_cd)
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
+    try:
+        fig_bar_cd.update_traces(cliponaxis=False)
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        # Evita que títulos automáticos virem 'undefined' no render
+        fig_bar_cd.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+    except Exception:
+        pass
     st.plotly_chart(fig_bar_cd, use_container_width=True, theme=None)
     # 2. RANKING EMPRESAS
     st.subheader("Ranking Empresas Críticos (SLA Até D+1)")
@@ -707,7 +630,15 @@ if total > 0:
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                          color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_emp = aplicar_estilo_plotly(fig_bar_emp, modo_mobile)
-    fig_bar_emp = aplicar_rotulos_percentuais_barras(fig_bar_emp)
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
+    try:
+        fig_bar_emp.update_traces(cliponaxis=False)
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        # Evita que títulos automáticos virem 'undefined' no render
+        fig_bar_emp.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+    except Exception:
+        pass
     st.plotly_chart(fig_bar_emp, use_container_width=True, theme=None)
     # 3. RANKING CANAL DE ATUAÇÃO
     st.subheader("Ranking Canal de Atuação Críticos (SLA Até D+1)")
@@ -719,7 +650,15 @@ if total > 0:
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                            color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_canal = aplicar_estilo_plotly(fig_bar_canal, modo_mobile)
-    fig_bar_canal = aplicar_rotulos_percentuais_barras(fig_bar_canal)
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
+    try:
+        fig_bar_canal.update_traces(cliponaxis=False)
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        # Evita que títulos automáticos virem 'undefined' no render
+        fig_bar_canal.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+    except Exception:
+        pass
     st.plotly_chart(fig_bar_canal, use_container_width=True, theme=None)
     # =============================
     # TABELA DE DETALHAMENTO FINAL
@@ -772,4 +711,3 @@ if total > 0:
 
 else:
     st.warning("Nenhum dado encontrado para os filtros selecionados.")
-
