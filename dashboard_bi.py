@@ -124,7 +124,7 @@ def aplicar_rotulos_percentuais_barras(fig, limiar_outside=15.0, tamanho_padrao=
 
             # Fora do padrão -> outside, horizontal; padrão -> inside, vertical
             tr.textposition = ['outside' if v < limiar_outside else 'inside' for v in y_vals]
-            tr.textangle = [0 if v < limiar_outside else 90 for v in y_vals]
+            tr.textangle = [0 if v < limiar_outside else -90 for v in y_vals]
 
             # Dentro da barra, topo (como no print)
             tr.insidetextanchor = 'end'
