@@ -93,7 +93,7 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     return fig
 
 
-def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=12, yshift_px=14):
+def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=14, yshift_px=10):
     """Quando o % ficar fora do padrão (fonte interna ficaria pequena), mostra FORA no topo (print 2)
     sem alterar o padrão das barras normais (print 1).
 
