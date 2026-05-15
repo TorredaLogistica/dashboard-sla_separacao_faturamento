@@ -93,6 +93,58 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
+
+
+def aplicar_rotulos_barras_percentuais(fig, limiar_outside=12.0):
+    """Padroniza rótulos (%) em gráficos de barras.
+
+    Regra:
+      - Se a barra for pequena (valor < limiar_outside), o rótulo vai PARA FORA no topo (horizontal),
+        para não ficar fora do padrão/cortado (ex.: Telmex).
+      - Caso contrário, o rótulo fica DENTRO da barra, no topo, na vertical (leitura de baixo para cima).
+
+    Funciona para qualquer gráfico de coluna (ranking) desde que o eixo Y esteja em percentual (0–100).
+    """
+    try:
+        for tr in fig.data:
+            # aplica apenas em barras com texto
+            if tr.type != 'bar':
+                continue
+
+            y = list(tr.y) if tr.y is not None else []
+            if not y:
+                continue
+
+            # Formata como "88%" (número antes do %)
+            tr.text = [f"{float(v):.2f}%" for v in y]
+
+            # Posição por ponto (fora se barra pequena)
+            pos_list = ['outside' if float(v) < limiar_outside else 'inside' for v in y]
+            tr.textposition = pos_list
+
+            # Ângulo por ponto: fora = horizontal; dentro = vertical
+            angle_list = [0 if float(v) < limiar_outside else -90 for v in y]
+            tr.textangle = angle_list
+
+            # Dentro: topo da barra (end). Fora: padrão.
+            tr.insidetextanchor = 'end'
+
+            # Evita cortar rótulos fora do topo
+            tr.cliponaxis = False
+
+        # Dá folga no eixo Y para o texto 'outside'
+        try:
+            fig.update_yaxes(range=[0, 105])
+        except Exception:
+            pass
+
+        # Remove títulos que podem aparecer como 'undefined' no render
+        fig.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+
+    except Exception:
+        pass
+
+    return fig
 # =============================
 # LOGIN (Mantido conforme original)
 # =============================
@@ -419,8 +471,6 @@ if aba == "📦 Volumetria de Pedidos":
         category_orders=cat_orders
     )
 
-    # Padrão dos rankings: rótulos dentro da barra, no topo, na vertical (de baixo para cima)
-    fig_volume.update_traces(textposition='inside', textangle=-90, insidetextanchor='end', cliponaxis=False)
     fig_volume.update_layout(
         height=(650 if modo_mobile else 560),
         title_x=0.0,
@@ -437,7 +487,7 @@ if aba == "📦 Volumetria de Pedidos":
 
     fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
-    st.plotly_chart(fig_volume, use_container_width=True, theme=None)
+    st.plotly_chart(fig_volume, use_container_width=True)
     st.stop()
 
 
@@ -610,11 +660,12 @@ if total > 0:
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                         color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_cd = aplicar_estilo_plotly(fig_bar_cd, modo_mobile)
+    fig_bar_cd = aplicar_rotulos_barras_percentuais(fig_bar_cd)
     # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
     try:
         fig_bar_cd.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        fig_bar_cd.update_traces(textposition='inside', insidetextanchor='end')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_cd.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -630,11 +681,12 @@ if total > 0:
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                          color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_emp = aplicar_estilo_plotly(fig_bar_emp, modo_mobile)
+    fig_bar_emp = aplicar_rotulos_barras_percentuais(fig_bar_emp)
     # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
     try:
         fig_bar_emp.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        fig_bar_emp.update_traces(textposition='inside', insidetextanchor='end')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_emp.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -650,11 +702,12 @@ if total > 0:
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                            color='Até D+1', color_continuous_scale='RdYlGn')
     fig_bar_canal = aplicar_estilo_plotly(fig_bar_canal, modo_mobile)
+    fig_bar_canal = aplicar_rotulos_barras_percentuais(fig_bar_canal)
     # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
     try:
         fig_bar_canal.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        fig_bar_canal.update_traces(textposition='inside', insidetextanchor='end')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_canal.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -711,3 +764,4 @@ if total > 0:
 
 else:
     st.warning("Nenhum dado encontrado para os filtros selecionados.")
+
