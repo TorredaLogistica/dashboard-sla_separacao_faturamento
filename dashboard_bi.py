@@ -93,40 +93,36 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     return fig
 
 
-def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=12, offset_outside=1.0):
-    """Mantém o rótulo padrão DENTRO da barra e move SOMENTE o que ficar fora do padrão para FORA.
-
-    Como identificar "fora do padrão"?
-      - Principal: barras com valor (y) pequeno.
-      - Para ser mais robusto, calcula um limiar mínimo dinamicamente baseado na altura do gráfico,
-        para garantir espaço suficiente para o texto (vertical) dentro da barra.
+def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=12, offset_outside=1.0, largura_ref=None):
+    """Move rótulos para FORA somente quando eles ficariam "fora do padrão" dentro da barra.
 
     Regras:
-      - Barras normais: NÃO altera nada (mantém exatamente o print 1).
-      - Fora do padrão (barra pequena):
-          * remove o texto dentro apenas daquela barra
-          * adiciona um rótulo externo (Scatter) no topo, horizontal, tamanho padrão
-          * garante folga no eixo Y para não cortar
+      - Barras normais: mantém o padrão atual DENTRO da barra (não altera orientação/posição).
+      - Fora do padrão (sem espaço): remove o texto dentro APENAS daquela barra e coloca texto FORA no topo,
+        horizontal, tamanho padrão, com folga no eixo Y.
+
+    Como detecta "fora do padrão" (aproximação robusta):
+      - Se a altura da barra (em px) não comporta o texto vertical no tamanho padrão, consideramos fora do padrão.
+      - Mantemos um limiar mínimo fixo (limiar_outside) como segurança.
+
+    Observação: o Plotly não expõe diretamente a fonte final renderizada (quando ele reduz), então usamos espaço disponível.
     """
     try:
         # Folga para não cortar texto externo
         fig.update_traces(cliponaxis=False)
         fig.update_layout(margin=dict(t=95))
 
-        # Calcula limiar dinâmico (em %) para caber o texto dentro da barra
-        # Aproximação: texto vertical precisa de ~ (tamanho_padrao*3) px de altura útil.
+        # Parâmetros geométricos aproximados
         h = fig.layout.height if getattr(fig.layout, 'height', None) else 550
         m = fig.layout.margin
         mt = m.t if m and getattr(m, 't', None) is not None else 90
         mb = m.b if m and getattr(m, 'b', None) is not None else 60
-        # área útil aproximada
-        plot_h = max(200, h - mt - mb)
-        px_necessarios = max(28, int(tamanho_padrao * 3))
-        limiar_dinamico = (px_necessarios / plot_h) * 100.0
+        plot_h = max(200, h - mt - mb)  # área útil
 
-        limiar_final = max(float(limiar_outside), float(limiar_dinamico))
+        # Largura de referência (para cenários com muitas categorias). Se não houver, assume desktop.
+        w = largura_ref or (fig.layout.width if getattr(fig.layout, 'width', None) else 1100)
 
-        # Dá folga no eixo Y para o texto 'outside'
+        # Folga no eixo Y
         try:
             fig.update_yaxes(range=[0, 110])
         except Exception:
@@ -143,19 +139,33 @@ def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=1
             y_vals = [float(v) for v in tr.y]
             x_vals = list(tr.x)
 
-            # texto atual (se já veio formatado), senão gera
+            # texto atual (se já veio), senão gera
             if getattr(tr, 'text', None) is not None:
-                txt = list(tr.text)
-                txt = [t if t is not None else '' for t in txt]
+                txt = [t if t is not None else '' for t in list(tr.text)]
             else:
                 txt = [f"{v:.2f}%" for v in y_vals]
 
-            # Detecta os pontos fora do padrão
-            small_idx = [i for i, v in enumerate(y_vals) if v < limiar_final]
+            # estimativa de largura de barra (quando há muitas categorias o texto pode ser reduzido)
+            n_barras = max(1, len(y_vals))
+            barra_w = w / (n_barras * 1.35)
+
+            small_idx = []
+            for i, v in enumerate(y_vals):
+                # altura da barra em px
+                barra_h_px = (v / 100.0) * plot_h
+                # comprimento do texto vertical (aprox.)
+                t = txt[i] if txt[i] else f"{v:.2f}%"
+                # px necessários para o texto vertical (caracteres empilhados)
+                px_necessarios = max(28, int(tamanho_padrao * max(3.0, len(t) * 0.6)))
+
+                # condição fora do padrão: pouco espaço vertical OU valor muito baixo (limiar fixo)
+                if v < float(limiar_outside) or barra_h_px < px_necessarios or barra_w < (tamanho_padrao * 0.9):
+                    small_idx.append(i)
+
             if not small_idx:
                 continue
 
-            # 1) remove texto dentro SOMENTE nas barras pequenas
+            # 1) remove texto dentro SOMENTE nos pontos fora do padrão
             for i in small_idx:
                 txt[i] = ''
             tr.text = txt
@@ -709,6 +719,7 @@ if total > 0:
         fig_bar_cd.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
         fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        fig_bar_cd = ajustar_percentual_fora_do_padrao(fig_bar_cd, limiar_outside=15.0)
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_cd.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -729,6 +740,7 @@ if total > 0:
         fig_bar_emp.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
         fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        fig_bar_emp = ajustar_percentual_fora_do_padrao(fig_bar_emp, limiar_outside=15.0)
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_emp.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -749,6 +761,7 @@ if total > 0:
         fig_bar_canal.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
         fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        fig_bar_canal = ajustar_percentual_fora_do_padrao(fig_bar_canal, limiar_outside=15.0)
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_canal.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
