@@ -93,42 +93,38 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     return fig
 
 
-def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=12, offset_outside=1.0, largura_ref=None):
-    """Move rótulos para FORA somente quando eles ficariam "fora do padrão" dentro da barra.
+def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=12, yshift_px=10):
+    """Quando o % ficar fora do padrão (fonte interna ficaria pequena), mostra FORA no topo (print 2)
+    sem alterar o padrão das barras normais (print 1).
 
-    Regras:
-      - Barras normais: mantém o padrão atual DENTRO da barra (não altera orientação/posição).
-      - Fora do padrão (sem espaço): remove o texto dentro APENAS daquela barra e coloca texto FORA no topo,
-        horizontal, tamanho padrão, com folga no eixo Y.
-
-    Como detecta "fora do padrão" (aproximação robusta):
-      - Se a altura da barra (em px) não comporta o texto vertical no tamanho padrão, consideramos fora do padrão.
-      - Mantemos um limiar mínimo fixo (limiar_outside) como segurança.
-
-    Observação: o Plotly não expõe diretamente a fonte final renderizada (quando ele reduz), então usamos espaço disponível.
+    Implementação robusta:
+      - NÃO altera o texto das barras normais.
+      - Para barras pequenas: remove o texto interno apenas daquela barra e adiciona ANNOTATION no topo.
+        Annotation é mais confiável que Scatter para garantir que o texto apareça.
     """
     try:
-        # Folga para não cortar texto externo
+        # Folga para não cortar o texto externo
         fig.update_traces(cliponaxis=False)
         fig.update_layout(margin=dict(t=95))
 
-        # Parâmetros geométricos aproximados
+        # Área útil aproximada (para decidir se cabe texto vertical dentro)
         h = fig.layout.height if getattr(fig.layout, 'height', None) else 550
         m = fig.layout.margin
         mt = m.t if m and getattr(m, 't', None) is not None else 90
         mb = m.b if m and getattr(m, 'b', None) is not None else 60
-        plot_h = max(200, h - mt - mb)  # área útil
+        plot_h = max(200, h - mt - mb)
 
-        # Largura de referência (para cenários com muitas categorias). Se não houver, assume desktop.
-        w = largura_ref or (fig.layout.width if getattr(fig.layout, 'width', None) else 1100)
+        # Limiar dinâmico mínimo para caber texto vertical tamanho padrão dentro
+        # (aproximação conservadora)
+        px_necessarios = max(28, int(tamanho_padrao * 3))
+        limiar_dinamico = (px_necessarios / plot_h) * 100.0
+        limiar_final = max(float(limiar_outside), float(limiar_dinamico))
 
-        # Folga no eixo Y
-        try:
-            fig.update_yaxes(range=[0, 110])
-        except Exception:
-            pass
+        # Coleta máximo Y para dar folga no eixo
+        max_y_global = 0.0
 
-        novas_traces = []
+        # Annotations existentes
+        ann = list(fig.layout.annotations) if fig.layout.annotations else []
 
         for tr in list(fig.data):
             if getattr(tr, 'type', None) != 'bar':
@@ -138,58 +134,46 @@ def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=1
 
             y_vals = [float(v) for v in tr.y]
             x_vals = list(tr.x)
+            max_y_global = max(max_y_global, max(y_vals) if y_vals else 0.0)
 
-            # texto atual (se já veio), senão gera
+            # texto atual no trace (padrão interno)
             if getattr(tr, 'text', None) is not None:
                 txt = [t if t is not None else '' for t in list(tr.text)]
             else:
                 txt = [f"{v:.2f}%" for v in y_vals]
 
-            # estimativa de largura de barra (quando há muitas categorias o texto pode ser reduzido)
-            n_barras = max(1, len(y_vals))
-            barra_w = w / (n_barras * 1.35)
-
-            small_idx = []
-            for i, v in enumerate(y_vals):
-                # altura da barra em px
-                barra_h_px = (v / 100.0) * plot_h
-                # comprimento do texto vertical (aprox.)
-                t = txt[i] if txt[i] else f"{v:.2f}%"
-                # px necessários para o texto vertical (caracteres empilhados)
-                px_necessarios = max(28, int(tamanho_padrao * max(3.0, len(t) * 0.6)))
-
-                # condição fora do padrão: pouco espaço vertical OU valor muito baixo (limiar fixo)
-                if v < float(limiar_outside) or barra_h_px < px_necessarios or barra_w < (tamanho_padrao * 0.9):
-                    small_idx.append(i)
-
+            # Detecta fora do padrão (barra pequena)
+            small_idx = [i for i, v in enumerate(y_vals) if v < limiar_final]
             if not small_idx:
                 continue
 
-            # 1) remove texto dentro SOMENTE nos pontos fora do padrão
+            # Remove texto interno apenas nas barras pequenas
             for i in small_idx:
                 txt[i] = ''
+
+                # Adiciona annotation fora no topo (horizontal, tamanho padrão)
+                ann.append(dict(
+                    x=x_vals[i],
+                    y=y_vals[i],
+                    xref='x',
+                    yref='y',
+                    text=f"{y_vals[i]:.2f}%",
+                    showarrow=False,
+                    xanchor='center',
+                    yanchor='bottom',
+                    yshift=yshift_px,
+                    font=dict(size=tamanho_padrao, color='#111111'),
+                ))
+
             tr.text = txt
 
-            # 2) adiciona texto externo no topo (horizontal)
-            xs = [x_vals[i] for i in small_idx]
-            ys = [y_vals[i] + float(offset_outside) for i in small_idx]
-            ts = [f"{y_vals[i]:.2f}%" for i in small_idx]
+        # Aplica annotations e folga no eixo Y
+        fig.update_layout(annotations=ann)
 
-            novas_traces.append(go.Scatter(
-                x=xs,
-                y=ys,
-                mode='text',
-                text=ts,
-                textposition='top center',
-                textangle=0,
-                textfont=dict(size=tamanho_padrao, color='#111111'),
-                showlegend=False,
-                hoverinfo='skip',
-                cliponaxis=False,
-            ))
-
-        for nt in novas_traces:
-            fig.add_trace(nt)
+        try:
+            fig.update_yaxes(range=[0, max(110, max_y_global + 8)])
+        except Exception:
+            pass
 
     except Exception:
         pass
