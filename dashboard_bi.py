@@ -91,6 +91,100 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     )
     fig = _corrigir_undefined_plotly(fig)
     return fig
+
+
+def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=12, offset_outside=1.0):
+    """Mantém o rótulo padrão DENTRO da barra e move SOMENTE o que ficar fora do padrão para FORA.
+
+    Como identificar "fora do padrão"?
+      - Principal: barras com valor (y) pequeno.
+      - Para ser mais robusto, calcula um limiar mínimo dinamicamente baseado na altura do gráfico,
+        para garantir espaço suficiente para o texto (vertical) dentro da barra.
+
+    Regras:
+      - Barras normais: NÃO altera nada (mantém exatamente o print 1).
+      - Fora do padrão (barra pequena):
+          * remove o texto dentro apenas daquela barra
+          * adiciona um rótulo externo (Scatter) no topo, horizontal, tamanho padrão
+          * garante folga no eixo Y para não cortar
+    """
+    try:
+        # Folga para não cortar texto externo
+        fig.update_traces(cliponaxis=False)
+        fig.update_layout(margin=dict(t=95))
+
+        # Calcula limiar dinâmico (em %) para caber o texto dentro da barra
+        # Aproximação: texto vertical precisa de ~ (tamanho_padrao*3) px de altura útil.
+        h = fig.layout.height if getattr(fig.layout, 'height', None) else 550
+        m = fig.layout.margin
+        mt = m.t if m and getattr(m, 't', None) is not None else 90
+        mb = m.b if m and getattr(m, 'b', None) is not None else 60
+        # área útil aproximada
+        plot_h = max(200, h - mt - mb)
+        px_necessarios = max(28, int(tamanho_padrao * 3))
+        limiar_dinamico = (px_necessarios / plot_h) * 100.0
+
+        limiar_final = max(float(limiar_outside), float(limiar_dinamico))
+
+        # Dá folga no eixo Y para o texto 'outside'
+        try:
+            fig.update_yaxes(range=[0, 110])
+        except Exception:
+            pass
+
+        novas_traces = []
+
+        for tr in list(fig.data):
+            if getattr(tr, 'type', None) != 'bar':
+                continue
+            if tr.y is None or tr.x is None:
+                continue
+
+            y_vals = [float(v) for v in tr.y]
+            x_vals = list(tr.x)
+
+            # texto atual (se já veio formatado), senão gera
+            if getattr(tr, 'text', None) is not None:
+                txt = list(tr.text)
+                txt = [t if t is not None else '' for t in txt]
+            else:
+                txt = [f"{v:.2f}%" for v in y_vals]
+
+            # Detecta os pontos fora do padrão
+            small_idx = [i for i, v in enumerate(y_vals) if v < limiar_final]
+            if not small_idx:
+                continue
+
+            # 1) remove texto dentro SOMENTE nas barras pequenas
+            for i in small_idx:
+                txt[i] = ''
+            tr.text = txt
+
+            # 2) adiciona texto externo no topo (horizontal)
+            xs = [x_vals[i] for i in small_idx]
+            ys = [y_vals[i] + float(offset_outside) for i in small_idx]
+            ts = [f"{y_vals[i]:.2f}%" for i in small_idx]
+
+            novas_traces.append(go.Scatter(
+                x=xs,
+                y=ys,
+                mode='text',
+                text=ts,
+                textposition='top center',
+                textangle=0,
+                textfont=dict(size=tamanho_padrao, color='#111111'),
+                showlegend=False,
+                hoverinfo='skip',
+                cliponaxis=False,
+            ))
+
+        for nt in novas_traces:
+            fig.add_trace(nt)
+
+    except Exception:
+        pass
+
+    return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
