@@ -316,6 +316,45 @@ if st.button("🔄 Atualizar dados"):
 # =============================
 
 @st.cache_data
+
+# =============================
+# PERFORMANCE: Detalhamento (tabela + download) sob demanda e com cache
+# =============================
+
+import io, json, hashlib
+from typing import Optional
+
+def _assinatura_filtros(aba: str, mes: str, periodo: Optional[int], filtros_sel: dict) -> str:
+    """Gera uma assinatura estável (md5) para cache/sessão com base na visão + filtros."""
+    payload = {
+        'aba': aba,
+        'mes': mes,
+        'periodo': periodo,
+        'filtros': {k: sorted(list(v)) for k, v in (filtros_sel or {}).items()}
+    }
+    s = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return hashlib.md5(s.encode('utf-8')).hexdigest()
+
+@st.cache_data(show_spinner=False, max_entries=60)
+def _df_para_excel_bytes(df_out: pd.DataFrame, sheet_name: str = 'Detalhamento', ajustar_largura: bool = False) -> bytes:
+    """Converte um DataFrame em bytes de Excel (.xlsx).
+
+    Observação: ajustar largura de coluna é bonito, porém pode ser caro em bases grandes.
+    Por padrão fica desligado para acelerar.
+    """
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        df_out.to_excel(writer, index=False, sheet_name=sheet_name)
+        if ajustar_largura:
+            ws = writer.sheets[sheet_name]
+            amostra = min(len(df_out), 2000)
+            for i, col in enumerate(df_out.columns):
+                try:
+                    col_len = max(df_out[col].astype(str).head(amostra).map(len).max(), len(col)) + 2
+                except Exception:
+                    col_len = len(col) + 2
+                ws.set_column(i, i, col_len)
+    return buffer.getvalue()
 def load_data(path):
     # engine='pyxlsb' é necessário para arquivos .xlsb
     df = pd.read_excel(path, engine='pyxlsb')
@@ -752,53 +791,94 @@ if total > 0:
         pass
     st.plotly_chart(fig_bar_canal, use_container_width=True, theme=None)
     # =============================
-    # TABELA DE DETALHAMENTO FINAL
+    # TABELA DE DETALHAMENTO FINAL (OTIMIZADA)
     # =============================
     st.markdown("---")
     st.subheader("📋 Detalhamento dos Pedidos")
-    
+
+    # Para deixar a navegação entre visões mais rápida, a tabela e o Excel são gerados SOB DEMANDA.
+    periodo_val = None
+    try:
+        if aba != "📅 Visão Diária":
+            periodo_val = int(periodo)
+    except Exception:
+        periodo_val = None
+
+    assinatura = _assinatura_filtros(aba, mes_selecionado, periodo_val, filtros_selecionados)
+
     colunas_detalhe = [
-        'Data NF', 'Pedido', 'Empresa', 'CD Origem', 
-        'Operador', 'Canal de Atuacao', 'Aging_Ajustado_D+'
+        'Data NF', 'Pedido', 'Empresa', 'CD Origem',
+        'Operador', 'Canal de Atuacao', 'Aging_Ajustado_D+',
     ]
-    
+
     # Filtra apenas as colunas que existem no arquivo
     colunas_presentes = [c for c in colunas_detalhe if c in base.columns]
-    df_detalhe = base[colunas_presentes].copy()
 
-    # Formatação de data para a tabela
-    if 'Data NF' in df_detalhe.columns:
-        df_detalhe['Data NF'] = df_detalhe['Data NF'].dt.strftime('%d/%m/%Y')
+    # Contador rápido (sem montar df completo)
+    st.caption(f"Pedidos no período/filtros: {len(base)}")
 
-
-    # Garantia extra: Pedido sem separador de milhar na exibição/baixar Excel
-    if 'Pedido' in df_detalhe.columns:
-        df_detalhe['Pedido'] = normalizar_pedido(df_detalhe['Pedido'])
-
-    st.dataframe(df_detalhe, use_container_width=True, hide_index=True)
-
-    # =============================
-    # BOTÃO DE DOWNLOAD (FORMATO EXCEL)
-    # =============================
-    import io
-
-    # Criar um buffer na memória para o arquivo Excel
-    buffer = io.BytesIO()
-    
-    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df_detalhe.to_excel(writer, index=False, sheet_name='Detalhamento')
-        # Ajuste automático de largura das colunas (opcional mas melhora o visual)
-        worksheet = writer.sheets['Detalhamento']
-        for i, col in enumerate(df_detalhe.columns):
-            column_len = max(df_detalhe[col].astype(str).map(len).max(), len(col)) + 2
-            worksheet.set_column(i, i, column_len)
-
-    st.download_button(
-        label="📥 Baixar Detalhamento em Excel (.xlsx)",
-        data=buffer.getvalue(),
-        file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    # 1) Carregar tabela na tela (opcional)
+    mostrar_detalhe = st.checkbox(
+        "Mostrar tabela de detalhamento na tela (pode demorar em bases grandes)",
+        value=False,
+        key=f"show_det_{assinatura}"
     )
+
+    if mostrar_detalhe:
+        df_detalhe = base[colunas_presentes].copy()
+
+        # Pedido sem separador de milhar na exibição
+        if 'Pedido' in df_detalhe.columns:
+            df_detalhe['Pedido'] = normalizar_pedido(df_detalhe['Pedido'])
+
+        # Mantém Data NF como datetime e formata via column_config (evita .dt.strftime em massa)
+        col_cfg = {}
+        if 'Data NF' in df_detalhe.columns:
+            try:
+                df_detalhe['Data NF'] = pd.to_datetime(df_detalhe['Data NF'], errors='coerce')
+                col_cfg['Data NF'] = st.column_config.DateColumn('Data NF', format='DD/MM/YYYY')
+            except Exception:
+                pass
+
+        st.dataframe(
+            df_detalhe,
+            use_container_width=True,
+            hide_index=True,
+            column_config=col_cfg
+        )
+    else:
+        st.info(
+            "Para acelerar a troca de visões, a tabela completa não é carregada automaticamente. "
+            "Marque a opção acima quando precisar visualizar."
+        )
+
+    # 2) Download Excel (gerado só quando solicitado)
+    col_btn1, col_btn2 = st.columns([1, 2])
+    with col_btn1:
+        gerar_excel = st.button("⚡ Gerar Excel do detalhamento", key=f"gen_excel_det_{assinatura}")
+
+    if gerar_excel:
+        with st.spinner("Gerando arquivo Excel..."):
+            # monta DF somente aqui (evita custo quando usuário só navega)
+            df_tmp = base[colunas_presentes].copy()
+            if 'Pedido' in df_tmp.columns:
+                df_tmp['Pedido'] = normalizar_pedido(df_tmp['Pedido'])
+            # Para máxima velocidade, NÃO ajusta largura de coluna por padrão
+            st.session_state[f"excel_det_{assinatura}"] = _df_para_excel_bytes(
+                df_tmp, sheet_name='Detalhamento', ajustar_largura=False
+            )
+
+    with col_btn2:
+        if f"excel_det_{assinatura}" in st.session_state:
+            st.download_button(
+                label="📥 Baixar Detalhamento em Excel (.xlsx)",
+                data=st.session_state[f"excel_det_{assinatura}"],
+                file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"btn_download_det_{assinatura}"
+            )
+        else:
+            st.caption("Clique em 'Gerar Excel do detalhamento' para preparar o arquivo sob demanda.")
 
 else:
     st.warning("Nenhum dado encontrado para os filtros selecionados.")
