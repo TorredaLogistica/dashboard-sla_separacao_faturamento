@@ -7,26 +7,218 @@ from datetime import datetime, date
 import os
 
 
+
+
+# =============================
+# DETECÇÃO AUTOMÁTICA DE CELULAR + AJUSTES DE FONTE (PLOTLY)
+# =============================
+
+def detectar_mobile() -> bool:
+    """Detecta acesso via celular/tablet pelo User-Agent.
+
+    Usa st.context.headers quando disponível.
+    Se st.context não existir/der erro, retorna False.
+    """
+    try:
+        ua = str(st.context.headers.get("user-agent", "")).lower()
+    except Exception:
+        return False
+
+    sinais_mobile = [
+        "android", "iphone", "ipad", "ipod", "mobile",
+        "windows phone", "opera mini", "blackberry",
+    ]
+    return any(s in ua for s in sinais_mobile)
+
+
+
+
+def _corrigir_undefined_plotly(fig):
+    """Remove textos 'undefined' (Plotly/JS) em títulos de eixos/legenda/colorbar.
+
+    Em alguns cenários, o Plotly pode renderizar literalmente a palavra "undefined"
+    quando o título do eixo (ou de legenda/colorbar) está ausente/None.
+    Esta função limpa isso sem alterar os dados.
+    """
+    try:
+        # Eixos (xaxis, xaxis2, yaxis, yaxis2, ...)
+        for k in fig.layout:
+            if str(k).startswith('xaxis') or str(k).startswith('yaxis'):
+                ax = fig.layout[k]
+                try:
+                    t = ax.title.text
+                    if t is None or str(t).strip().lower() == 'undefined':
+                        ax.title.text = ''
+                except Exception:
+                    pass
+
+        # Título da legenda
+        try:
+            lt = fig.layout.legend.title.text
+            if lt is None or str(lt).strip().lower() == 'undefined':
+                fig.layout.legend.title.text = ''
+        except Exception:
+            pass
+
+        # Colorbar (quando usa escala contínua)
+        try:
+            ca = fig.layout.coloraxis
+            if ca and ca.colorbar and ca.colorbar.title:
+                ct = ca.colorbar.title.text
+                if ct is None or str(ct).strip().lower() == 'undefined':
+                    ca.colorbar.title.text = ''
+        except Exception:
+            pass
+
+    except Exception:
+        pass
+
+    return fig
+def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
+    """Ajusta fontes do Plotly para melhor legibilidade e proporção."""
+    # Fontes base (maiores no desktop; no celular mantém legível sem estourar layout)
+    font_base = 16 if not modo_mobile else 13
+    font_axis = 14 if not modo_mobile else 12
+    font_legend = 14 if not modo_mobile else 12
+    font_title = 22 if not modo_mobile else 18
+
+    fig.update_layout(
+        font=dict(size=font_base),
+        title_font=dict(size=font_title),
+        legend=dict(font=dict(size=font_legend)),
+        xaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
+        yaxis=dict(tickfont=dict(size=font_axis), title_font=dict(size=font_axis)),
+    )
+    fig = _corrigir_undefined_plotly(fig)
+    return fig
+
+
+def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=14, yshift_px=10):
+    """Quando o % ficar fora do padrão (fonte interna ficaria pequena), mostra FORA no topo (print 2)
+    sem alterar o padrão das barras normais (print 1).
+
+    Implementação robusta:
+      - NÃO altera o texto das barras normais.
+      - Para barras pequenas: remove o texto interno apenas daquela barra e adiciona ANNOTATION no topo.
+        Annotation é mais confiável que Scatter para garantir que o texto apareça.
+    """
+    try:
+        # Folga para não cortar o texto externo
+        fig.update_traces(cliponaxis=False)
+        fig.update_layout(margin=dict(t=95))
+
+        # Área útil aproximada (para decidir se cabe texto vertical dentro)
+        h = fig.layout.height if getattr(fig.layout, 'height', None) else 550
+        m = fig.layout.margin
+        mt = m.t if m and getattr(m, 't', None) is not None else 90
+        mb = m.b if m and getattr(m, 'b', None) is not None else 60
+        plot_h = max(200, h - mt - mb)
+
+        # Limiar dinâmico mínimo para caber texto vertical tamanho padrão dentro
+        # (aproximação conservadora)
+        px_necessarios = max(28, int(tamanho_padrao * 3))
+        limiar_dinamico = (px_necessarios / plot_h) * 100.0
+        limiar_final = max(float(limiar_outside), float(limiar_dinamico))
+
+        # Coleta máximo Y para dar folga no eixo
+        max_y_global = 0.0
+
+        # Annotations existentes
+        ann = list(fig.layout.annotations) if fig.layout.annotations else []
+
+        for tr in list(fig.data):
+            if getattr(tr, 'type', None) != 'bar':
+                continue
+            if tr.y is None or tr.x is None:
+                continue
+
+            y_vals = [float(v) for v in tr.y]
+            x_vals = list(tr.x)
+            max_y_global = max(max_y_global, max(y_vals) if y_vals else 0.0)
+
+            # texto atual no trace (padrão interno)
+            if getattr(tr, 'text', None) is not None:
+                txt = [t if t is not None else '' for t in list(tr.text)]
+            else:
+                txt = [f"{v:.2f}%" for v in y_vals]
+
+            # Detecta fora do padrão (barra pequena)
+            small_idx = [i for i, v in enumerate(y_vals) if v < limiar_final]
+            if not small_idx:
+                continue
+
+            # Remove texto interno apenas nas barras pequenas
+            for i in small_idx:
+                txt[i] = ''
+
+                # Adiciona annotation fora no topo (horizontal, tamanho padrão)
+                ann.append(dict(
+                    x=x_vals[i],
+                    y=y_vals[i],
+                    xref='x',
+                    yref='y',
+                    text=f"{y_vals[i]:.2f}%",
+                    showarrow=False,
+                    xanchor='center',
+                    yanchor='bottom',
+                    yshift=yshift_px,
+                    font=dict(size=tamanho_padrao, color='#111111'),
+                ))
+
+            tr.text = txt
+
+        # Aplica annotations e folga no eixo Y
+        fig.update_layout(annotations=ann)
+
+        try:
+            fig.update_yaxes(range=[0, max(110, max_y_global + 8)])
+        except Exception:
+            pass
+
+    except Exception:
+        pass
+
+    return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
 # LOGIN (Mantido conforme original)
 # =============================
 def check_password():
+    """Login simples e robusto.
+
+    Evita KeyError em cenários comuns no celular (reconexão do WebSocket,
+    aba "dormindo", troca de rede), onde o session_state pode reiniciar
+    sem a chave 'password'.
+    """
+
+    # Inicializa as chaves para evitar KeyError
+    if "password" not in st.session_state:
+        st.session_state["password"] = ""
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
     def password_entered():
-        if st.session_state["password"] == "claro2026":
+        if st.session_state.get("password", "") == "claro2026":
             st.session_state["password_correct"] = True
-            del st.session_state["password"]
+            # Não deletar a chave (evita KeyError após reconexões no mobile)
+            st.session_state["password"] = ""
         else:
             st.session_state["password_correct"] = False
-    
-    if "password_correct" not in st.session_state:
+
+    if not st.session_state.get("password_correct", False):
         st.title("🔒 Acesso Restrito")
-        st.text_input("Digite a senha", type="password", on_change=password_entered, key="password")
-        st.stop()
-    elif not st.session_state["password_correct"]:
-        st.text_input("Digite a senha", type="password", on_change=password_entered, key="password")
-        st.error("Senha incorreta")
+        st.text_input(
+            "Digite a senha",
+            type="password",
+            on_change=password_entered,
+            key="password",
+        )
+
+        # Mostra erro somente depois que o usuário tentar
+        if st.session_state.get("password", "") != "" and not st.session_state.get("password_correct", False):
+            st.error("Senha incorreta")
+
         st.stop()
 
 check_password()
@@ -36,7 +228,7 @@ check_password()
 # =============================
 from datetime import timedelta
 
-st.title("Dashboard SLA Separação e Faturamento")
+st.title("Dashboard Separação e Faturamento")
 # Ajusta para o horário de Brasília (UTC-3)
 horario_brasilia = datetime.now() - timedelta(hours=3)
 st.caption(f"Atualizado em {horario_brasilia.strftime('%d/%m/%Y %H:%M')}")
@@ -130,6 +322,40 @@ def load_data(path):
     df.columns = df.columns.str.strip()
 
     # =============================
+    # SANEAR CATEGORIAS (evita categorias vazias e a palavra 'undefined' em rankings)
+    # =============================
+    def _sanear_categoria(df_, col, valor_padrao='Não informado'):
+        if col not in df_.columns:
+            return df_
+        s = (df_[col]
+             .fillna(valor_padrao)
+             .astype(str)
+             .str.replace(' ', '', regex=False)  # remove NBSP
+             .str.strip()
+        )
+        s = s.replace({
+            '': valor_padrao,
+            'nan': valor_padrao,
+            'NaN': valor_padrao,
+            'None': valor_padrao,
+            '<NA>': valor_padrao,
+            'undefined': valor_padrao,
+            'Undefined': valor_padrao,
+            'UNDEFINED': valor_padrao,
+        })
+        df_[col] = s
+        return df_
+
+    for _c in ['CD Origem', 'Empresa', 'Canal de Atuacao', 'Canal', 'Operador', 'Unidade de Negocio']:
+        df = _sanear_categoria(df, _c)
+
+    # PME como sigla nas colunas de canal
+    for _c in ['Canal de Atuacao', 'Canal']:
+        if _c in df.columns:
+            df[_c] = df[_c].replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
+
+
+    # =============================
     # PADRONIZAÇÃO DE PEDIDO (SEM SEPARADOR DE MILHAR)
     # =============================
     # Garante que o ID do pedido fique como texto e sem formatação: 32310684
@@ -158,6 +384,7 @@ def load_data(path):
         if low in ['ecommerce', 'e-commerce', 'e commerce']: return 'Ecommerce'
         if low in ['loja propria', 'loja própria']: return 'Loja Própria'
         if low in ['agente autorizado', 'agentes autorizados', 'agente autorizados']: return 'Agente Autorizado'
+        if low in ['pme', 'p.m.e', 'pme.']: return 'PME'  # mantém sigla
         # Title Case geral
         words = s.lower().split(' ')
         keep_lower = {'de','da','do','das','dos','e'}
@@ -209,6 +436,14 @@ df = load_data(caminho_arquivo)
 with st.sidebar:
     if os.path.exists("logo_claro.png"):
         st.image("logo_claro.png", use_container_width=True)
+
+    # 📱 Modo celular: melhora a leitura (rótulos dos valores na vertical)
+    # 📱 Modo celular (automático via User-Agent, com opção de override)
+    auto_mobile = detectar_mobile()
+    if 'modo_mobile' not in st.session_state:
+        st.session_state['modo_mobile'] = auto_mobile
+    modo_mobile = st.checkbox('📱 Modo celular (auto)', key='modo_mobile', help='Ativado automaticamente quando detectado acesso por celular. Desmarque para forçar modo desktop.')
+
     
     aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos"], horizontal=True)
     lista_meses = sorted(df['Mes_Ano'].unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
@@ -272,16 +507,25 @@ if aba == "📦 Volumetria de Pedidos":
         category_orders=cat_orders
     )
 
+    # Padrão dos rankings: rótulos dentro da barra, no topo, na vertical (de baixo para cima)
+    fig_volume.update_traces(textposition='inside', textangle=-90, insidetextanchor='end', cliponaxis=False)
     fig_volume.update_layout(
-        height=550,
+        height=(650 if modo_mobile else 560),
         title_x=0.0,
         xaxis_title='Canal de Atuação',
         yaxis_title='',
         legend_title_text='Mês'
     )
-    fig_volume.update_traces(textposition='outside')
+    if modo_mobile:
+        # No celular: rótulos na vertical (leitura de baixo para cima)
+        fig_volume.update_traces(textposition='outside', textangle=-90, textfont_size=11, cliponaxis=False)
+        fig_volume.update_layout(margin=dict(l=30, r=10, t=70, b=120), legend_orientation='h', legend_y=-0.25)
+    else:
+        fig_volume.update_traces(textposition='outside', textfont_size=13)
 
-    st.plotly_chart(fig_volume, use_container_width=True)
+    fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
+
+    st.plotly_chart(fig_volume, use_container_width=True, theme=None)
     st.stop()
 
 
@@ -373,8 +617,23 @@ if total > 0:
         hovermode="x unified"
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    fig = aplicar_estilo_plotly(fig, modo_mobile)
 
+    # Ajuste pontual: evita cortar os rótulos (%) no topo do gráfico de linhas
+
+    try:
+
+        fig.update_traces(cliponaxis=False)
+
+        fig.update_yaxes(range=[0, 105])
+
+        fig.update_layout(margin=dict(t=90))
+
+    except Exception:
+
+        pass
+
+    st.plotly_chart(fig, use_container_width=True)
     # ... (código anterior do gráfico de linhas)
 
     # TABELA DE RESUMO (SLA E METAS)
@@ -438,8 +697,18 @@ if total > 0:
     fig_bar_cd = px.bar(rank_cd, x='CD Origem', y='Até D+1', 
                         text=rank_cd['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                         color='Até D+1', color_continuous_scale='RdYlGn')
-    st.plotly_chart(fig_bar_cd, use_container_width=True)
-
+    fig_bar_cd = aplicar_estilo_plotly(fig_bar_cd, modo_mobile)
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
+    try:
+        fig_bar_cd.update_traces(cliponaxis=False)
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        fig_bar_cd = ajustar_percentual_fora_do_padrao(fig_bar_cd, limiar_outside=15.0)
+        # Evita que títulos automáticos virem 'undefined' no render
+        fig_bar_cd.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+    except Exception:
+        pass
+    st.plotly_chart(fig_bar_cd, use_container_width=True, theme=None)
     # 2. RANKING EMPRESAS
     st.subheader("Ranking Empresas Críticos (SLA Até D+1)")
     rank_emp = base.groupby('Empresa').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
@@ -449,8 +718,18 @@ if total > 0:
     fig_bar_emp = px.bar(rank_emp, x='Empresa', y='Até D+1', 
                          text=rank_emp['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                          color='Até D+1', color_continuous_scale='RdYlGn')
-    st.plotly_chart(fig_bar_emp, use_container_width=True)
-
+    fig_bar_emp = aplicar_estilo_plotly(fig_bar_emp, modo_mobile)
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
+    try:
+        fig_bar_emp.update_traces(cliponaxis=False)
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        fig_bar_emp = ajustar_percentual_fora_do_padrao(fig_bar_emp, limiar_outside=15.0)
+        # Evita que títulos automáticos virem 'undefined' no render
+        fig_bar_emp.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+    except Exception:
+        pass
+    st.plotly_chart(fig_bar_emp, use_container_width=True, theme=None)
     # 3. RANKING CANAL DE ATUAÇÃO
     st.subheader("Ranking Canal de Atuação Críticos (SLA Até D+1)")
     rank_canal = base.groupby('Canal de Atuacao').agg({'flag_d0':'sum','flag_d1':'sum','Pedido':'count'}).reset_index()
@@ -460,8 +739,18 @@ if total > 0:
     fig_bar_canal = px.bar(rank_canal, x='Canal de Atuacao', y='Até D+1', 
                            text=rank_canal['Até D+1'].apply(lambda x: f"{x:.2f}%"), 
                            color='Até D+1', color_continuous_scale='RdYlGn')
-    st.plotly_chart(fig_bar_canal, use_container_width=True)
-
+    fig_bar_canal = aplicar_estilo_plotly(fig_bar_canal, modo_mobile)
+    # Ajuste: % dentro da barra (no topo) e prevenção de 'undefined'
+    try:
+        fig_bar_canal.update_traces(cliponaxis=False)
+        # % dentro da barra, alinhado ao topo (como no print)
+        fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
+        fig_bar_canal = ajustar_percentual_fora_do_padrao(fig_bar_canal, limiar_outside=15.0)
+        # Evita que títulos automáticos virem 'undefined' no render
+        fig_bar_canal.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
+    except Exception:
+        pass
+    st.plotly_chart(fig_bar_canal, use_container_width=True, theme=None)
     # =============================
     # TABELA DE DETALHAMENTO FINAL
     # =============================
@@ -480,6 +769,7 @@ if total > 0:
     # Formatação de data para a tabela
     if 'Data NF' in df_detalhe.columns:
         df_detalhe['Data NF'] = df_detalhe['Data NF'].dt.strftime('%d/%m/%Y')
+
 
     # Garantia extra: Pedido sem separador de milhar na exibição/baixar Excel
     if 'Pedido' in df_detalhe.columns:
