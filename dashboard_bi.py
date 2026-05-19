@@ -837,7 +837,7 @@ if total > 0:
         st.download_button(
             label="📥 Baixar Detalhamento em Excel (.xlsx)",
             data=buffer.getvalue(),
-            file_name=f"detalhe_sla_{mes_selecionado.replace("/", "_")}.xlsx",
+            file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
@@ -853,12 +853,12 @@ if total > 0:
                 st.download_button(
                     label="📥 Baixar Detalhamento em Excel (.xlsx)",
                     data=st.session_state[key_bytes],
-                    file_name=f"detalhe_sla_{mes_selecionado.replace("/", "_")}.xlsx",
+                    file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key=f"btn_det_{assinatura}"
                 )
             else:
-                st.caption("Clique em "Preparar Excel do detalhamento" para gerar o arquivo.")
+                st.caption('Clique em "Preparar Excel do detalhamento" para gerar o arquivo.')
 
 else:
     st.warning("Nenhum dado encontrado para os filtros selecionados.")
