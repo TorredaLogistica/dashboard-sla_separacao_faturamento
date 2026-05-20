@@ -821,44 +821,25 @@ if total > 0:
     # =============================
     # BOTÃO DE DOWNLOAD (FORMATO EXCEL)
     # =============================
-    
-    # Mantém o comportamento atual na Visão Diária (rápido por ter 1 mês).
-    # Na Evolução Mensal, evita gerar o Excel a cada rerun (isso fazia o botão demorar ~10s).
-    if aba == "📅 Visão Diária":
-        import io
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df_detalhe.to_excel(writer, index=False, sheet_name='Detalhamento')
-            worksheet = writer.sheets['Detalhamento']
-            for i, col in enumerate(df_detalhe.columns):
-                column_len = max(df_detalhe[col].astype(str).map(len).max(), len(col)) + 2
-                worksheet.set_column(i, i, column_len)
-    
-        st.download_button(
-            label="📥 Baixar Detalhamento em Excel (.xlsx)",
-            data=buffer.getvalue(),
-            file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        assinatura = _assinatura_detalhamento(aba, mes_selecionado, int(periodo) if "periodo" in locals() else None, filtros_selecionados)
-        key_bytes = f"excel_det_{assinatura}"
-        cprep, cdown = st.columns([1, 2])
-        with cprep:
-            if st.button("⚡ Preparar Excel do detalhamento", key=f"prep_{assinatura}"):
-                with st.spinner("Gerando arquivo Excel..."):
-                    st.session_state[key_bytes] = _excel_bytes_detalhamento(df_detalhe)
-        with cdown:
-            if key_bytes in st.session_state:
-                st.download_button(
-                    label="📥 Baixar Detalhamento em Excel (.xlsx)",
-                    data=st.session_state[key_bytes],
-                    file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key=f"btn_det_{assinatura}"
-                )
-            else:
-                st.caption('Clique em "Preparar Excel do detalhamento" para gerar o arquivo.')
+    import io
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        df_detalhe.to_excel(writer, index=False, sheet_name='Detalhamento')
+        worksheet = writer.sheets['Detalhamento']
+        # OTIMIZAÇÃO: calcula largura por AMOSTRA (evita varrer toda a base no mensal)
+        amostra = min(len(df_detalhe), 2000)
+        for i, col in enumerate(df_detalhe.columns):
+            try:
+                column_len = max(df_detalhe[col].astype(str).head(amostra).map(len).max(), len(col)) + 2
+            except Exception:
+                column_len = len(col) + 2
+            worksheet.set_column(i, i, column_len)
+    st.download_button(
+        label="📥 Baixar Detalhamento em Excel (.xlsx)",
+        data=buffer.getvalue(),
+        file_name=f"detalhe_sla_{mes_selecionado.replace('/', '_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 else:
     st.warning("Nenhum dado encontrado para os filtros selecionados.")
