@@ -91,94 +91,6 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     )
     fig = _corrigir_undefined_plotly(fig)
     return fig
-
-
-def ajustar_percentual_fora_do_padrao(fig, limiar_outside=15.0, tamanho_padrao=14, yshift_px=10):
-    """Quando o % ficar fora do padrão (fonte interna ficaria pequena), mostra FORA no topo (print 2)
-    sem alterar o padrão das barras normais (print 1).
-
-    Implementação robusta:
-      - NÃO altera o texto das barras normais.
-      - Para barras pequenas: remove o texto interno apenas daquela barra e adiciona ANNOTATION no topo.
-        Annotation é mais confiável que Scatter para garantir que o texto apareça.
-    """
-    try:
-        # Folga para não cortar o texto externo
-        fig.update_traces(cliponaxis=False)
-        fig.update_layout(margin=dict(t=95))
-
-        # Área útil aproximada (para decidir se cabe texto vertical dentro)
-        h = fig.layout.height if getattr(fig.layout, 'height', None) else 550
-        m = fig.layout.margin
-        mt = m.t if m and getattr(m, 't', None) is not None else 90
-        mb = m.b if m and getattr(m, 'b', None) is not None else 60
-        plot_h = max(200, h - mt - mb)
-
-        # Limiar dinâmico mínimo para caber texto vertical tamanho padrão dentro
-        # (aproximação conservadora)
-        px_necessarios = max(28, int(tamanho_padrao * 3))
-        limiar_dinamico = (px_necessarios / plot_h) * 100.0
-        limiar_final = max(float(limiar_outside), float(limiar_dinamico))
-
-        # Coleta máximo Y para dar folga no eixo
-        max_y_global = 0.0
-
-        # Annotations existentes
-        ann = list(fig.layout.annotations) if fig.layout.annotations else []
-
-        for tr in list(fig.data):
-            if getattr(tr, 'type', None) != 'bar':
-                continue
-            if tr.y is None or tr.x is None:
-                continue
-
-            y_vals = [float(v) for v in tr.y]
-            x_vals = list(tr.x)
-            max_y_global = max(max_y_global, max(y_vals) if y_vals else 0.0)
-
-            # texto atual no trace (padrão interno)
-            if getattr(tr, 'text', None) is not None:
-                txt = [t if t is not None else '' for t in list(tr.text)]
-            else:
-                txt = [f"{v:.2f}%" for v in y_vals]
-
-            # Detecta fora do padrão (barra pequena)
-            small_idx = [i for i, v in enumerate(y_vals) if v < limiar_final]
-            if not small_idx:
-                continue
-
-            # Remove texto interno apenas nas barras pequenas
-            for i in small_idx:
-                txt[i] = ''
-
-                # Adiciona annotation fora no topo (horizontal, tamanho padrão)
-                ann.append(dict(
-                    x=x_vals[i],
-                    y=y_vals[i],
-                    xref='x',
-                    yref='y',
-                    text=f"{y_vals[i]:.2f}%",
-                    showarrow=False,
-                    xanchor='center',
-                    yanchor='bottom',
-                    yshift=yshift_px,
-                    font=dict(size=tamanho_padrao, color='#111111'),
-                ))
-
-            tr.text = txt
-
-        # Aplica annotations e folga no eixo Y
-        fig.update_layout(annotations=ann)
-
-        try:
-            fig.update_yaxes(range=[0, max(110, max_y_global + 8)])
-        except Exception:
-            pass
-
-    except Exception:
-        pass
-
-    return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
@@ -507,8 +419,6 @@ if aba == "📦 Volumetria de Pedidos":
         category_orders=cat_orders
     )
 
-    # Padrão dos rankings: rótulos dentro da barra, no topo, na vertical (de baixo para cima)
-    fig_volume.update_traces(textposition='inside', textangle=-90, insidetextanchor='end', cliponaxis=False)
     fig_volume.update_layout(
         height=(650 if modo_mobile else 560),
         title_x=0.0,
@@ -525,7 +435,7 @@ if aba == "📦 Volumetria de Pedidos":
 
     fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
 
-    st.plotly_chart(fig_volume, use_container_width=True, theme=None)
+    st.plotly_chart(fig_volume, use_container_width=True)
     st.stop()
 
 
@@ -702,8 +612,7 @@ if total > 0:
     try:
         fig_bar_cd.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_cd.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
-        fig_bar_cd = ajustar_percentual_fora_do_padrao(fig_bar_cd, limiar_outside=15.0)
+        fig_bar_cd.update_traces(textposition='inside', insidetextanchor='end')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_cd.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -723,8 +632,7 @@ if total > 0:
     try:
         fig_bar_emp.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_emp.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
-        fig_bar_emp = ajustar_percentual_fora_do_padrao(fig_bar_emp, limiar_outside=15.0)
+        fig_bar_emp.update_traces(textposition='inside', insidetextanchor='end')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_emp.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
@@ -744,8 +652,7 @@ if total > 0:
     try:
         fig_bar_canal.update_traces(cliponaxis=False)
         # % dentro da barra, alinhado ao topo (como no print)
-        fig_bar_canal.update_traces(textposition='inside', textangle=-90, insidetextanchor='end')
-        fig_bar_canal = ajustar_percentual_fora_do_padrao(fig_bar_canal, limiar_outside=15.0)
+        fig_bar_canal.update_traces(textposition='inside', insidetextanchor='end')
         # Evita que títulos automáticos virem 'undefined' no render
         fig_bar_canal.update_layout(xaxis_title='', yaxis_title='', legend_title_text='', coloraxis_colorbar_title_text='')
     except Exception:
