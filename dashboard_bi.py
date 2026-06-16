@@ -372,19 +372,15 @@ def load_data(path):
         if s == '' or s.lower() in ['nan', 'none', '<na>']:
             return pd.NA
 
-        # já no formato mm/aaaa ou m/aaaa
         m = re.match(r'^(\d{1,2})/(\d{4})$', s)
         if m:
             return f"{int(m.group(1)):02d}/{m.group(2)}"
 
-        # formato mm/aa ou m/aa
         m = re.match(r'^(\d{1,2})/(\d{2})$', s)
         if m:
-            ano = int(m.group(2))
-            ano = 2000 + ano if ano < 100 else ano
+            ano = 2000 + int(m.group(2))
             return f"{int(m.group(1)):02d}/{ano:04d}"
 
-        # formatos textuais ex.: jan-25, fev/26, junho-2026
         mapa_meses = {
             'jan': 1, 'janeiro': 1,
             'fev': 2, 'fevereiro': 2,
@@ -398,24 +394,20 @@ def load_data(path):
             'out': 10, 'outubro': 10,
             'nov': 11, 'novembro': 11,
             'dez': 12, 'dezembro': 12,
-            'apr': 4, 'may': 5, 'aug': 8, 'sep': 9, 'oct': 10, 'dec': 12
+            'apr': 4, 'may': 5, 'aug': 8, 'sep': 9, 'oct': 10, 'dec': 12,
         }
         s_limpo = s.lower().replace('_', '-').replace('/', '-').replace('.', '').strip()
         m = re.match(r'^([a-zç]+)-?(\d{2,4})$', s_limpo)
         if m:
             mes_txt = m.group(1)
-            ano_txt = m.group(2)
+            ano_txt = int(m.group(2))
             if mes_txt in mapa_meses:
-                ano = int(ano_txt)
-                if ano < 100:
-                    ano = 2000 + ano
+                ano = 2000 + ano_txt if ano_txt < 100 else ano_txt
                 return f"{mapa_meses[mes_txt]:02d}/{ano:04d}"
 
-        # tenta converter por data e extrair mês/ano
         dt = pd.to_datetime(s, errors='coerce', dayfirst=True)
         if pd.notna(dt):
             return dt.strftime('%m/%Y')
-
         return s
 
     # =============================
@@ -434,15 +426,11 @@ def load_data(path):
     df['Mes_Corte_Fatura'] = pd.NA
     df['Mes_Corte_Fatura_Ordem'] = np.nan
 
-    # Fallback: se já existir coluna pronta na Planilha1, aproveita
     colunas_fallback = [
         'Mes_Faturamento', 'Mês_Faturamento', 'Mes Faturamento', 'Mês Faturamento',
         'Mes_Faturamen', 'Mês_Faturamen', 'Mes_Corte_Fatura', 'Mês_Corte_Fatura'
     ]
     col_fallback = next((c for c in colunas_fallback if c in df.columns), None)
-    if col_fallback is not None:
-        serie_fb = df[col_fallback].apply(_normalizar_mes_corte)
-        df['Mes_Corte_Fatura'] = serie_fb
 
     if not cortes.empty and cortes.shape[1] >= 3:
         col_mes_corte = cortes.columns[0]
@@ -453,30 +441,36 @@ def load_data(path):
         mapa_corte.columns = ['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']
         mapa_corte['Data_Inicio_Corte'] = _converter_data_excel(mapa_corte['Data_Inicio_Corte'])
         mapa_corte['Data_Fim_Corte'] = _converter_data_excel(mapa_corte['Data_Fim_Corte'])
-        mapa_corte['Mes_Corte_Fatura'] = mapa_corte['Mes_Corte_Fatura'].apply(_normalizar_mes_corte)
+        mapa_corte['Mes_Corte_Fatura'] = mapa_corte['Mes_Corte_Fatura'].map(_normalizar_mes_corte)
         mapa_corte = mapa_corte.dropna(subset=['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']).copy()
         mapa_corte = mapa_corte[mapa_corte['Mes_Corte_Fatura'].astype(str).str.len() > 0].copy()
         mapa_corte = mapa_corte.sort_values('Data_Fim_Corte').reset_index(drop=True)
 
-        # se a coluna fallback vier apenas numérica (ex.: 1,2,3), prioriza o cruzamento por datas
-        df['Mes_Corte_Fatura'] = pd.NA
-
-        for _, linha_corte in mapa_corte.iterrows():
-            mask_corte = (
-                (df['Data NF'] >= linha_corte['Data_Inicio_Corte']) &
-                (df['Data NF'] <= linha_corte['Data_Fim_Corte'])
+        if not mapa_corte.empty:
+            intervalos = pd.IntervalIndex.from_arrays(
+                mapa_corte['Data_Inicio_Corte'],
+                mapa_corte['Data_Fim_Corte'],
+                closed='both'
             )
-            df.loc[mask_corte, 'Mes_Corte_Fatura'] = linha_corte['Mes_Corte_Fatura']
+            idx = intervalos.get_indexer(df['Data NF'])
+            mask_idx = idx >= 0
+            if mask_idx.any():
+                valores_mes = mapa_corte['Mes_Corte_Fatura'].to_numpy()
+                df.loc[mask_idx, 'Mes_Corte_Fatura'] = valores_mes[idx[mask_idx]]
 
-        ordem_corte = mapa_corte[['Mes_Corte_Fatura', 'Data_Fim_Corte']].drop_duplicates().sort_values('Data_Fim_Corte')
-        mapa_ordem = {mes: idx + 1 for idx, mes in enumerate(ordem_corte['Mes_Corte_Fatura'].tolist())}
-        df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem)
+            ordem_corte = mapa_corte[['Mes_Corte_Fatura', 'Data_Fim_Corte']].drop_duplicates().sort_values('Data_Fim_Corte')
+            mapa_ordem = {mes: pos + 1 for pos, mes in enumerate(ordem_corte['Mes_Corte_Fatura'].tolist())}
+            df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem)
 
-    # se não conseguiu pela Planilha2, usa fallback da Planilha1
+    # fallback da Planilha1 somente se necessário
     if df['Mes_Corte_Fatura'].isna().all() and col_fallback is not None:
-        serie_fb = df[col_fallback].apply(_normalizar_mes_corte)
-        df['Mes_Corte_Fatura'] = serie_fb
-        ordem_fb = pd.Series(df['Mes_Corte_Fatura'].dropna().unique()).tolist()
+        valores_unicos = pd.Series(df[col_fallback].dropna().astype(str).unique())
+        mapa_fb = {valor: _normalizar_mes_corte(valor) for valor in valores_unicos.tolist()}
+        df['Mes_Corte_Fatura'] = df[col_fallback].astype(str).map(mapa_fb)
+        ordem_fb = sorted(
+            [x for x in pd.Series(df['Mes_Corte_Fatura'].dropna().unique()).tolist() if pd.notna(x)],
+            key=lambda x: datetime.strptime(x, '%m/%Y') if re.match(r'^\d{2}/\d{4}$', str(x)) else datetime.min
+        )
         mapa_ordem_fb = {mes: idx + 1 for idx, mes in enumerate(ordem_fb)}
         df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem_fb)
 
@@ -604,7 +598,13 @@ if aba == "📦 Volumetria de Pedidos":
     if coluna_periodo == 'Mes_Ano':
         ordem_periodos = sorted(meses_selecionados, key=lambda x: datetime.strptime(x, '%m/%Y')) if meses_selecionados else None
     else:
-        ordem_periodos = (base_vol[[coluna_periodo, 'Mes_Corte_Fatura_Ordem']].dropna().drop_duplicates().sort_values('Mes_Corte_Fatura_Ordem')[coluna_periodo].tolist())
+        ordem_periodos = (
+            base_vol[[coluna_periodo, 'Mes_Corte_Fatura_Ordem']]
+            .dropna()
+            .drop_duplicates()
+            .sort_values('Mes_Corte_Fatura_Ordem', ascending=False)[coluna_periodo]
+            .tolist()[::-1]
+        )
 
     category_orders = {coluna_periodo: ordem_periodos} if ordem_periodos else None
     col_canal = _coluna_canal(base_vol)
