@@ -231,11 +231,43 @@ if st.button("🔄 Atualizar dados"):
 @st.cache_data
 def load_data(path):
     # engine='pyxlsb' é necessário para arquivos .xlsb
-    df = pd.read_excel(path, sheet_name=0, engine='pyxlsb')
-    cortes = pd.read_excel(path, sheet_name=1, engine='pyxlsb')
+    with pd.ExcelFile(path, engine='pyxlsb') as xls:
+        sheet_names = [str(s).strip() for s in xls.sheet_names]
+
+        if not sheet_names:
+            raise ValueError("Nenhuma aba encontrada no arquivo .xlsb.")
+
+        def _norm_sheet_name(nome):
+            return str(nome).strip().lower().replace(' ', '')
+
+        # Aba principal
+        aba_principal = None
+        for candidato in ['planilha1', 'sheet1', 'base', 'dados']:
+            achou = next((s for s in sheet_names if _norm_sheet_name(s) == candidato), None)
+            if achou:
+                aba_principal = achou
+                break
+        if aba_principal is None:
+            aba_principal = sheet_names[0]
+
+        # Aba de cortes (Planilha2)
+        aba_cortes = None
+        candidatos_cortes = ['planilha2', 'sheet2', 'corte', 'cortes', 'fatura', 'fat']
+        for s in sheet_names:
+            ns = _norm_sheet_name(s)
+            if ns in candidatos_cortes or any(chave in ns for chave in ['planilha2', 'sheet2', 'corte', 'fatura']):
+                if s != aba_principal:
+                    aba_cortes = s
+                    break
+        if aba_cortes is None and len(sheet_names) > 1:
+            aba_cortes = sheet_names[1]
+
+        df = pd.read_excel(xls, sheet_name=aba_principal)
+        cortes = pd.read_excel(xls, sheet_name=aba_cortes) if aba_cortes is not None else pd.DataFrame()
 
     df.columns = df.columns.str.strip()
-    cortes.columns = cortes.columns.str.strip()
+    if not cortes.empty:
+        cortes.columns = cortes.columns.str.strip()
 
     # =============================
     # SANEAR CATEGORIAS (evita categorias vazias e a palavra 'undefined' em rankings)
@@ -246,9 +278,8 @@ def load_data(path):
         s = (df_[col]
              .fillna(valor_padrao)
              .astype(str)
-             .str.replace('\u00A0', '', regex=False)  # remove NBSP
-             .str.strip()
-        )
+             .str.replace('\u00A0', '', regex=False)
+             .str.strip())
         s = s.replace({
             '': valor_padrao,
             'nan': valor_padrao,
@@ -275,13 +306,11 @@ def load_data(path):
     # =============================
     if 'Pedido' not in df.columns and 'Pedidos' in df.columns:
         df['Pedido'] = df['Pedidos']
-
     if 'Pedido' in df.columns:
         df['Pedido'] = normalizar_pedido(df['Pedido'])
 
-    # PADRONIZAÇÃO DE CANAIS (evita duplicidade por maiúsculas/minúsculas, espaços e acentos)
+    # PADRONIZAÇÃO DE CANAIS
     import unicodedata, re
-
     def _norm_key(v):
         s = '' if v is None else str(v)
         s = s.strip()
@@ -324,7 +353,7 @@ def load_data(path):
     # DATAS PRINCIPAIS
     # =============================
     if 'Data NF' not in df.columns:
-        raise KeyError("Coluna 'Data NF' não encontrada na Planilha1.")
+        raise KeyError("Coluna 'Data NF' não encontrada na aba principal.")
 
     if pd.api.types.is_numeric_dtype(df['Data NF']):
         df['Data NF'] = pd.to_datetime(df['Data NF'], unit='D', origin='1899-12-30', errors='coerce')
@@ -336,21 +365,17 @@ def load_data(path):
 
     # =============================
     # ENQUADRAMENTO POR CORTE DE FATURA (Planilha2)
-    # Coluna A = Mês/Ano do corte
-    # Coluna B = Início
-    # Coluna C = Corte
     # =============================
     df['Mes_Corte_Fatura'] = pd.NA
     df['Mes_Corte_Fatura_Ordem'] = np.nan
 
-    if cortes.shape[1] >= 3:
+    if not cortes.empty and cortes.shape[1] >= 3:
         col_mes_corte = cortes.columns[0]
         col_inicio = cortes.columns[1]
         col_corte = cortes.columns[2]
 
         mapa_corte = cortes[[col_mes_corte, col_inicio, col_corte]].copy()
         mapa_corte.columns = ['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']
-
         mapa_corte['Data_Inicio_Corte'] = pd.to_datetime(mapa_corte['Data_Inicio_Corte'], errors='coerce', dayfirst=True)
         mapa_corte['Data_Fim_Corte'] = pd.to_datetime(mapa_corte['Data_Fim_Corte'], errors='coerce', dayfirst=True)
         mapa_corte = mapa_corte.dropna(subset=['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']).copy()
@@ -370,8 +395,6 @@ def load_data(path):
 
     # Extrai apenas o número depois do D+
     df['aging_num'] = df['Aging_Ajustado_D+'].astype(str).str.extract(r'D\+(\d+)').astype(int)
-
-    # Flags corretas
     df['flag_d0'] = df['aging_num'] == 0
     df['flag_d1'] = df['aging_num'] == 1
     df['flag_d2'] = df['aging_num'] == 2
@@ -384,7 +407,11 @@ if not os.path.exists(caminho_arquivo):
     st.error(f"Arquivo {caminho_arquivo} não encontrado!")
     st.stop()
 
-df = load_data(caminho_arquivo)
+try:
+    df = load_data(caminho_arquivo)
+except Exception as e:
+    st.error(f"Erro ao carregar a base: {e}")
+    st.stop()
 
 
 # =============================
@@ -395,8 +422,6 @@ with st.sidebar:
     if os.path.exists("logo_claro.png"):
         st.image("logo_claro.png", use_container_width=True)
 
-    # 📱 Modo celular: melhora a leitura (rótulos dos valores na vertical)
-    # 📱 Modo celular (automático via User-Agent, com opção de override)
     auto_mobile = detectar_mobile()
     if 'modo_mobile' not in st.session_state:
         st.session_state['modo_mobile'] = auto_mobile
@@ -412,11 +437,7 @@ with st.sidebar:
         tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False)
 
         if tipo_volumetria == "Calendário (Data NF)":
-            meses_selecionados = st.multiselect(
-                "Mês de Referência",
-                lista_meses,
-                default=[lista_meses[0]] if lista_meses else []
-            )
+            meses_selecionados = st.multiselect("Mês de Referência", lista_meses, default=[lista_meses[0]] if lista_meses else [])
         else:
             base_corte_sidebar = (
                 df.loc[df['Mes_Corte_Fatura'].notna(), ['Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem']]
@@ -424,11 +445,7 @@ with st.sidebar:
                   .sort_values('Mes_Corte_Fatura_Ordem', ascending=False)
             )
             lista_meses_corte = base_corte_sidebar['Mes_Corte_Fatura'].tolist()
-            meses_selecionados = st.multiselect(
-                "Mês de Corte da Fatura",
-                lista_meses_corte,
-                default=[lista_meses_corte[0]] if lista_meses_corte else []
-            )
+            meses_selecionados = st.multiselect("Mês de Corte da Fatura", lista_meses_corte, default=[lista_meses_corte[0]] if lista_meses_corte else [])
 
         mes_selecionado = meses_selecionados[0] if meses_selecionados else None
     else:
@@ -471,23 +488,14 @@ if aba == "📦 Volumetria de Pedidos":
         return df_local.groupby(group_cols).size().reset_index(name='Volume')
 
     def _formatar_figura_volumetria(fig, eixo_x_titulo, altura=None, rotacionar_x=False, legenda_titulo='Mês'):
-        fig.update_layout(
-            height=altura or (650 if modo_mobile else 560),
-            title_x=0.0,
-            xaxis_title=eixo_x_titulo,
-            yaxis_title='',
-            legend_title_text=legenda_titulo
-        )
-
+        fig.update_layout(height=altura or (650 if modo_mobile else 560), title_x=0.0, xaxis_title=eixo_x_titulo, yaxis_title='', legend_title_text=legenda_titulo)
         if modo_mobile:
             fig.update_traces(textposition='outside', textangle=-90, textfont_size=11, cliponaxis=False)
             fig.update_layout(margin=dict(l=30, r=10, t=70, b=120), legend_orientation='h', legend_y=-0.25)
         else:
             fig.update_traces(textposition='outside', textfont_size=13)
-
         if rotacionar_x:
             fig.update_xaxes(tickangle=-35)
-
         return aplicar_estilo_plotly(fig, modo_mobile)
 
     coluna_periodo = 'Mes_Ano'
@@ -509,56 +517,19 @@ if aba == "📦 Volumetria de Pedidos":
     if coluna_periodo == 'Mes_Ano':
         ordem_periodos = sorted(meses_selecionados, key=lambda x: datetime.strptime(x, '%m/%Y')) if meses_selecionados else None
     else:
-        ordem_periodos = (
-            base_vol[[coluna_periodo, 'Mes_Corte_Fatura_Ordem']]
-            .dropna()
-            .drop_duplicates()
-            .sort_values('Mes_Corte_Fatura_Ordem')[coluna_periodo]
-            .tolist()
-        )
+        ordem_periodos = (base_vol[[coluna_periodo, 'Mes_Corte_Fatura_Ordem']].dropna().drop_duplicates().sort_values('Mes_Corte_Fatura_Ordem')[coluna_periodo].tolist())
 
     category_orders = {coluna_periodo: ordem_periodos} if ordem_periodos else None
     col_canal = _coluna_canal(base_vol)
 
-    # Visão geral (sem abertura por canal)
     vol_geral = _contar_volume(base_vol, [coluna_periodo])
-    fig_geral = px.bar(
-        vol_geral,
-        x=coluna_periodo,
-        y='Volume',
-        color=coluna_periodo,
-        text='Volume',
-        title=titulo_geral,
-        category_orders=category_orders
-    )
-    fig_geral = _formatar_figura_volumetria(
-        fig_geral,
-        eixo_x_titulo=('Mês de Referência' if coluna_periodo == 'Mes_Ano' else 'Mês de Corte da Fatura'),
-        altura=(500 if not modo_mobile else 620),
-        rotacionar_x=False,
-        legenda_titulo=legenda_periodo
-    )
+    fig_geral = px.bar(vol_geral, x=coluna_periodo, y='Volume', color=coluna_periodo, text='Volume', title=titulo_geral, category_orders=category_orders)
+    fig_geral = _formatar_figura_volumetria(fig_geral, eixo_x_titulo=('Mês de Referência' if coluna_periodo == 'Mes_Ano' else 'Mês de Corte da Fatura'), altura=(500 if not modo_mobile else 620), legenda_titulo=legenda_periodo)
     st.plotly_chart(fig_geral, use_container_width=True)
 
-    # Visão detalhada por canal
     vol_canal = _contar_volume(base_vol, [col_canal, coluna_periodo])
-    fig_canal = px.bar(
-        vol_canal,
-        x=col_canal,
-        y='Volume',
-        color=coluna_periodo,
-        barmode='group',
-        text='Volume',
-        title=titulo_canal,
-        category_orders=category_orders
-    )
-    fig_canal = _formatar_figura_volumetria(
-        fig_canal,
-        eixo_x_titulo='Canal de Atuação',
-        altura=(650 if not modo_mobile else 720),
-        rotacionar_x=True,
-        legenda_titulo=legenda_periodo
-    )
+    fig_canal = px.bar(vol_canal, x=col_canal, y='Volume', color=coluna_periodo, barmode='group', text='Volume', title=titulo_canal, category_orders=category_orders)
+    fig_canal = _formatar_figura_volumetria(fig_canal, eixo_x_titulo='Canal de Atuação', altura=(650 if not modo_mobile else 720), rotacionar_x=True, legenda_titulo=legenda_periodo)
     st.plotly_chart(fig_canal, use_container_width=True)
     st.stop()
 
