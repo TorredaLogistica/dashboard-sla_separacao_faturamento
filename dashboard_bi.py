@@ -343,6 +343,44 @@ def load_data(path):
         tem_mes_ano = float(labels.str.contains(r'\d{1,2}/\d{2,4}|[a-zA-ZçÇ]{3,}\s*[-/]?\s*\d{2,4}', regex=True, na=False).mean()) if len(labels) else 0.0
         return taxa_d1 + taxa_d2 + tem_mes_ano
 
+    def _aplicar_mapa_corte(df_base, df_cortes):
+        if df_cortes is None or df_cortes.empty or df_cortes.shape[1] < 3:
+            return df_base, False
+
+        mapa_corte = df_cortes.iloc[:, :3].copy()
+        mapa_corte.columns = ['Mes_Corte_Original', 'Data_Inicio_Corte', 'Data_Fim_Corte']
+        mapa_corte['Data_Inicio_Corte'] = _converter_data_excel(mapa_corte['Data_Inicio_Corte'])
+        mapa_corte['Data_Fim_Corte'] = _converter_data_excel(mapa_corte['Data_Fim_Corte'])
+        mapa_corte = mapa_corte.dropna(subset=['Data_Inicio_Corte', 'Data_Fim_Corte']).copy()
+        if mapa_corte.empty:
+            return df_base, False
+
+        # Regra final: filtro sempre em MM/AAAA pela data final do corte
+        mapa_corte['Mes_Corte_Fatura'] = mapa_corte['Data_Fim_Corte'].dt.strftime('%m/%Y')
+        mapa_corte = (
+            mapa_corte[['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']]
+            .drop_duplicates()
+            .sort_values(['Data_Fim_Corte', 'Data_Inicio_Corte'])
+            .reset_index(drop=True)
+        )
+        if mapa_corte.empty:
+            return df_base, False
+
+        intervalos = pd.IntervalIndex.from_arrays(
+            mapa_corte['Data_Inicio_Corte'],
+            mapa_corte['Data_Fim_Corte'],
+            closed='both'
+        )
+        idx = intervalos.get_indexer(df_base['Data NF'])
+        mask_idx = idx >= 0
+        if mask_idx.any():
+            valores_mes = mapa_corte['Mes_Corte_Fatura'].to_numpy()
+            df_base.loc[mask_idx, 'Mes_Corte_Fatura'] = valores_mes[idx[mask_idx]]
+
+        mapa_ordem = {mes: pos + 1 for pos, mes in enumerate(mapa_corte['Mes_Corte_Fatura'].tolist())}
+        df_base['Mes_Corte_Fatura_Ordem'] = df_base['Mes_Corte_Fatura'].map(mapa_ordem)
+        return df_base, bool(mask_idx.any())
+
     # =============================
     # DATAS PRINCIPAIS
     # =============================
@@ -354,23 +392,22 @@ def load_data(path):
     df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
 
     # =============================
-    # CORTE DE FATURA (V10 - SAFE)
-    # - nunca quebra o app
-    # - tenta ler as abas uma a uma (mais estável no pyxlsb)
-    # - usa SOMENTE a melhor aba detectada para montar MM/AAAA
+    # CORTE DE FATURA (V11)
+    # 1) tenta detectar a aba de cortes dentro do próprio XLSB
+    # 2) se o arquivo em produção tiver só 1 aba, tenta arquivo auxiliar externo
     # =============================
     df['Mes_Corte_Fatura'] = pd.NA
     df['Mes_Corte_Fatura_Ordem'] = np.nan
     df.attrs['abas_encontradas'] = ''
     df.attrs['aba_corte_detectada'] = ''
     df.attrs['erro_corte'] = ''
+    df.attrs['fonte_corte'] = ''
 
     try:
         with pd.ExcelFile(path, engine='pyxlsb') as xls2:
             sheet_names = [str(s).strip() for s in xls2.sheet_names]
             df.attrs['abas_encontradas'] = ' | '.join(sheet_names)
 
-            # Tenta identificar a aba principal para excluí-la da busca
             aba_principal = sheet_names[0] if sheet_names else ''
             for candidato in ['planilha1', 'sheet1', 'base', 'dados']:
                 achou = next((s for s in sheet_names if str(s).strip().lower().replace(' ', '') == candidato), None)
@@ -397,41 +434,43 @@ def load_data(path):
 
             if melhor_aba_corte is not None and melhor_score > 0.80 and melhor_df_corte is not None:
                 df.attrs['aba_corte_detectada'] = melhor_aba_corte
-                cortes = melhor_df_corte.copy()
-                cortes.columns = [str(c).strip() for c in cortes.columns]
-
-                if cortes.shape[1] >= 3:
-                    mapa_corte = cortes.iloc[:, :3].copy()
-                    mapa_corte.columns = ['Mes_Corte_Original', 'Data_Inicio_Corte', 'Data_Fim_Corte']
-                    mapa_corte['Data_Inicio_Corte'] = _converter_data_excel(mapa_corte['Data_Inicio_Corte'])
-                    mapa_corte['Data_Fim_Corte'] = _converter_data_excel(mapa_corte['Data_Fim_Corte'])
-                    mapa_corte = mapa_corte.dropna(subset=['Data_Inicio_Corte', 'Data_Fim_Corte']).copy()
-                    mapa_corte['Mes_Corte_Fatura'] = mapa_corte['Data_Fim_Corte'].dt.strftime('%m/%Y')
-                    mapa_corte = (
-                        mapa_corte[['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']]
-                        .drop_duplicates()
-                        .sort_values(['Data_Fim_Corte', 'Data_Inicio_Corte'])
-                        .reset_index(drop=True)
-                    )
-
-                    if not mapa_corte.empty:
-                        intervalos = pd.IntervalIndex.from_arrays(
-                            mapa_corte['Data_Inicio_Corte'],
-                            mapa_corte['Data_Fim_Corte'],
-                            closed='both'
-                        )
-                        idx = intervalos.get_indexer(df['Data NF'])
-                        mask_idx = idx >= 0
-                        if mask_idx.any():
-                            valores_mes = mapa_corte['Mes_Corte_Fatura'].to_numpy()
-                            df.loc[mask_idx, 'Mes_Corte_Fatura'] = valores_mes[idx[mask_idx]]
-
-                        mapa_ordem = {mes: pos + 1 for pos, mes in enumerate(mapa_corte['Mes_Corte_Fatura'].tolist())}
-                        df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem)
-            else:
-                df.attrs['erro_corte'] = 'Nenhuma aba de corte válida foi detectada automaticamente.'
+                df, ok = _aplicar_mapa_corte(df, melhor_df_corte)
+                if ok:
+                    df.attrs['fonte_corte'] = f"Aba interna: {melhor_aba_corte}"
     except Exception as e:
         df.attrs['erro_corte'] = str(e)
+
+    # Fallback controlado: arquivo auxiliar externo com datas de corte
+    if df['Mes_Corte_Fatura'].isna().all():
+        candidatos_aux = [
+            'datas_corte_fatura.xlsx',
+            'datas_corte_fatura.xlsb',
+            'corte_fatura.xlsx',
+            'corte_fatura.xlsb',
+            'planilha2.xlsx',
+            'planilha2.xlsb'
+        ]
+        for nome_aux in candidatos_aux:
+            p_aux = Path(nome_aux)
+            if not p_aux.exists():
+                continue
+            try:
+                if p_aux.suffix.lower() == '.csv':
+                    df_aux = pd.read_csv(p_aux)
+                elif p_aux.suffix.lower() == '.xlsb':
+                    df_aux = pd.read_excel(p_aux, engine='pyxlsb')
+                else:
+                    df_aux = pd.read_excel(p_aux)
+                df_aux.columns = [str(c).strip() for c in df_aux.columns]
+                df, ok = _aplicar_mapa_corte(df, df_aux)
+                if ok:
+                    df.attrs['fonte_corte'] = f"Arquivo auxiliar: {nome_aux}"
+                    break
+            except Exception:
+                continue
+
+    if df['Mes_Corte_Fatura'].isna().all() and not df.attrs.get('erro_corte'):
+        df.attrs['erro_corte'] = 'Nenhuma aba de corte válida foi detectada automaticamente e nenhum arquivo auxiliar foi encontrado.'
 
     # Extrai apenas o número depois do D+
     df['aging_num'] = df['Aging_Ajustado_D+'].astype(str).str.extract(r'D\+(\d+)').astype(int)
@@ -494,13 +533,17 @@ with st.sidebar:
                 st.caption("⚠️ Não foi possível detectar automaticamente a aba de cortes neste arquivo.")
                 abas_detectadas = df.attrs.get('abas_encontradas', '')
                 aba_corte = df.attrs.get('aba_corte_detectada', '')
+                fonte_corte = df.attrs.get('fonte_corte', '')
                 erro_corte = df.attrs.get('erro_corte', '')
                 if abas_detectadas:
-                    st.caption(f"Abas detectadas no arquivo: {abas_detectadas}")
+                    st.caption(f"Abas detectadas no arquivo principal: {abas_detectadas}")
                 if aba_corte:
                     st.caption(f"Aba de corte identificada: {aba_corte}")
+                if fonte_corte:
+                    st.caption(f"Fonte utilizada para corte: {fonte_corte}")
                 if erro_corte:
                     st.caption(f"Detalhe: {erro_corte}")
+                st.caption("Se o arquivo em produção tiver somente a Planilha1, publique um arquivo auxiliar com as datas de corte, por exemplo: datas_corte_fatura.xlsx")
 
         mes_selecionado = meses_selecionados[0] if meses_selecionados else None
     else:
