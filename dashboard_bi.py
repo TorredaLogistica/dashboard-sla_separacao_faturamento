@@ -296,7 +296,6 @@ def load_data(path):
     for _c in ['CD Origem', 'Empresa', 'Canal de Atuacao', 'Canal', 'Operador', 'Unidade de Negocio']:
         df = _sanear_categoria(df, _c)
 
-    # PME como sigla nas colunas de canal
     for _c in ['Canal de Atuacao', 'Canal']:
         if _c in df.columns:
             df[_c] = df[_c].replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
@@ -372,6 +371,11 @@ def load_data(path):
         if s == '' or s.lower() in ['nan', 'none', '<na>']:
             return pd.NA
 
+        # IMPORTANTE: se vier apenas número do mês (ex.: 4), ignora.
+        # Não retorna mais '4' para o filtro; só aceita valores com mês/ano.
+        if re.fullmatch(r'\d{1,2}', s):
+            return pd.NA
+
         m = re.match(r'^(\d{1,2})/(\d{4})$', s)
         if m:
             return f"{int(m.group(1)):02d}/{m.group(2)}"
@@ -408,7 +412,9 @@ def load_data(path):
         dt = pd.to_datetime(s, errors='coerce', dayfirst=True)
         if pd.notna(dt):
             return dt.strftime('%m/%Y')
-        return s
+
+        # Qualquer formato não reconhecido é ignorado para evitar exibir apenas MM
+        return pd.NA
 
     # =============================
     # DATAS PRINCIPAIS
@@ -432,6 +438,7 @@ def load_data(path):
     ]
     col_fallback = next((c for c in colunas_fallback if c in df.columns), None)
 
+    # PRIORIDADE 1: Planilha2 (regra oficial de corte)
     if not cortes.empty and cortes.shape[1] >= 3:
         col_mes_corte = cortes.columns[0]
         col_inicio = cortes.columns[1]
@@ -462,14 +469,14 @@ def load_data(path):
             mapa_ordem = {mes: pos + 1 for pos, mes in enumerate(ordem_corte['Mes_Corte_Fatura'].tolist())}
             df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem)
 
-    # fallback da Planilha1 somente se necessário
+    # PRIORIDADE 2: fallback da Planilha1, mas somente se já vier em MM/AAAA (ou conversível)
     if df['Mes_Corte_Fatura'].isna().all() and col_fallback is not None:
         valores_unicos = pd.Series(df[col_fallback].dropna().astype(str).unique())
         mapa_fb = {valor: _normalizar_mes_corte(valor) for valor in valores_unicos.tolist()}
         df['Mes_Corte_Fatura'] = df[col_fallback].astype(str).map(mapa_fb)
         ordem_fb = sorted(
             [x for x in pd.Series(df['Mes_Corte_Fatura'].dropna().unique()).tolist() if pd.notna(x)],
-            key=lambda x: datetime.strptime(x, '%m/%Y') if re.match(r'^\d{2}/\d{4}$', str(x)) else datetime.min
+            key=lambda x: datetime.strptime(x, '%m/%Y')
         )
         mapa_ordem_fb = {mes: idx + 1 for idx, mes in enumerate(ordem_fb)}
         df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem_fb)
@@ -603,7 +610,7 @@ if aba == "📦 Volumetria de Pedidos":
             .dropna()
             .drop_duplicates()
             .sort_values('Mes_Corte_Fatura_Ordem', ascending=False)[coluna_periodo]
-            .tolist()[::-1]
+            .tolist()
         )
 
     category_orders = {coluna_periodo: ordem_periodos} if ordem_periodos else None
