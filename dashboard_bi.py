@@ -270,7 +270,7 @@ def load_data(path):
         cortes.columns = cortes.columns.str.strip()
 
     # =============================
-    # SANEAR CATEGORIAS (evita categorias vazias e a palavra 'undefined' em rankings)
+    # SANEAR CATEGORIAS
     # =============================
     def _sanear_categoria(df_, col, valor_padrao='Não informado'):
         if col not in df_.columns:
@@ -302,14 +302,16 @@ def load_data(path):
             df[_c] = df[_c].replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
 
     # =============================
-    # PADRONIZAÇÃO DE PEDIDO (SEM SEPARADOR DE MILHAR)
+    # PEDIDO
     # =============================
     if 'Pedido' not in df.columns and 'Pedidos' in df.columns:
         df['Pedido'] = df['Pedidos']
     if 'Pedido' in df.columns:
         df['Pedido'] = normalizar_pedido(df['Pedido'])
 
+    # =============================
     # PADRONIZAÇÃO DE CANAIS
+    # =============================
     import unicodedata, re
     def _norm_key(v):
         s = '' if v is None else str(v)
@@ -350,16 +352,26 @@ def load_data(path):
     df = _padronizar_coluna(df, 'Canal')
 
     # =============================
+    # FUNÇÃO AUXILIAR PARA DATAS (TRATA SERIAL DO EXCEL E TEXTO)
+    # =============================
+    def _converter_data_excel(serie):
+        s = serie.copy()
+        if pd.api.types.is_numeric_dtype(s):
+            return pd.to_datetime(s, unit='D', origin='1899-12-30', errors='coerce')
+        s_num = pd.to_numeric(s, errors='coerce')
+        out = pd.to_datetime(s, errors='coerce', dayfirst=True)
+        mask_num = s_num.notna() & out.isna()
+        if mask_num.any():
+            out.loc[mask_num] = pd.to_datetime(s_num.loc[mask_num], unit='D', origin='1899-12-30', errors='coerce')
+        return out
+
+    # =============================
     # DATAS PRINCIPAIS
     # =============================
     if 'Data NF' not in df.columns:
         raise KeyError("Coluna 'Data NF' não encontrada na aba principal.")
 
-    if pd.api.types.is_numeric_dtype(df['Data NF']):
-        df['Data NF'] = pd.to_datetime(df['Data NF'], unit='D', origin='1899-12-30', errors='coerce')
-    else:
-        df['Data NF'] = pd.to_datetime(df['Data NF'], errors='coerce', dayfirst=True)
-
+    df['Data NF'] = _converter_data_excel(df['Data NF'])
     df = df[df['Data NF'].notna()].copy()
     df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
 
@@ -369,6 +381,17 @@ def load_data(path):
     df['Mes_Corte_Fatura'] = pd.NA
     df['Mes_Corte_Fatura_Ordem'] = np.nan
 
+    # Fallback: se já existir coluna pronta na Planilha1, aproveita
+    colunas_fallback = [
+        'Mes_Faturamento', 'Mês_Faturamento', 'Mes Faturamento', 'Mês Faturamento',
+        'Mes_Faturamen', 'Mês_Faturamen', 'Mes_Corte_Fatura', 'Mês_Corte_Fatura'
+    ]
+    col_fallback = next((c for c in colunas_fallback if c in df.columns), None)
+    if col_fallback is not None:
+        serie_fb = df[col_fallback].astype(str).str.strip()
+        serie_fb = serie_fb.replace({'nan': pd.NA, 'None': pd.NA, '': pd.NA})
+        df['Mes_Corte_Fatura'] = serie_fb
+
     if not cortes.empty and cortes.shape[1] >= 3:
         col_mes_corte = cortes.columns[0]
         col_inicio = cortes.columns[1]
@@ -376,11 +399,15 @@ def load_data(path):
 
         mapa_corte = cortes[[col_mes_corte, col_inicio, col_corte]].copy()
         mapa_corte.columns = ['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']
-        mapa_corte['Data_Inicio_Corte'] = pd.to_datetime(mapa_corte['Data_Inicio_Corte'], errors='coerce', dayfirst=True)
-        mapa_corte['Data_Fim_Corte'] = pd.to_datetime(mapa_corte['Data_Fim_Corte'], errors='coerce', dayfirst=True)
+        mapa_corte['Data_Inicio_Corte'] = _converter_data_excel(mapa_corte['Data_Inicio_Corte'])
+        mapa_corte['Data_Fim_Corte'] = _converter_data_excel(mapa_corte['Data_Fim_Corte'])
         mapa_corte = mapa_corte.dropna(subset=['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']).copy()
         mapa_corte['Mes_Corte_Fatura'] = mapa_corte['Mes_Corte_Fatura'].astype(str).str.strip()
+        mapa_corte = mapa_corte[mapa_corte['Mes_Corte_Fatura'].str.len() > 0].copy()
         mapa_corte = mapa_corte.sort_values('Data_Fim_Corte').reset_index(drop=True)
+
+        # se a coluna fallback vier apenas numérica (ex.: 1,2,3), prioriza o cruzamento por datas
+        df['Mes_Corte_Fatura'] = pd.NA
 
         for _, linha_corte in mapa_corte.iterrows():
             mask_corte = (
@@ -392,6 +419,15 @@ def load_data(path):
         ordem_corte = mapa_corte[['Mes_Corte_Fatura', 'Data_Fim_Corte']].drop_duplicates().sort_values('Data_Fim_Corte')
         mapa_ordem = {mes: idx + 1 for idx, mes in enumerate(ordem_corte['Mes_Corte_Fatura'].tolist())}
         df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem)
+
+    # se não conseguiu pela Planilha2, usa fallback da Planilha1
+    if df['Mes_Corte_Fatura'].isna().all() and col_fallback is not None:
+        serie_fb = df[col_fallback].astype(str).str.strip()
+        serie_fb = serie_fb.replace({'nan': pd.NA, 'None': pd.NA, '': pd.NA})
+        df['Mes_Corte_Fatura'] = serie_fb
+        ordem_fb = pd.Series(df['Mes_Corte_Fatura'].dropna().unique()).tolist()
+        mapa_ordem_fb = {mes: idx + 1 for idx, mes in enumerate(ordem_fb)}
+        df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem_fb)
 
     # Extrai apenas o número depois do D+
     df['aging_num'] = df['Aging_Ajustado_D+'].astype(str).str.extract(r'D\+(\d+)').astype(int)
