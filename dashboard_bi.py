@@ -233,12 +233,39 @@ def load_data(path):
     # engine='pyxlsb' é necessário para arquivos .xlsb
     with pd.ExcelFile(path, engine='pyxlsb') as xls:
         sheet_names = [str(s).strip() for s in xls.sheet_names]
-
         if not sheet_names:
             raise ValueError("Nenhuma aba encontrada no arquivo .xlsb.")
 
         def _norm_sheet_name(nome):
             return str(nome).strip().lower().replace(' ', '')
+
+        def _converter_data_excel(serie):
+            s = serie.copy()
+            if pd.api.types.is_numeric_dtype(s):
+                return pd.to_datetime(s, unit='D', origin='1899-12-30', errors='coerce')
+            s_num = pd.to_numeric(s, errors='coerce')
+            out = pd.to_datetime(s, errors='coerce', dayfirst=True)
+            mask_num = s_num.notna() & out.isna()
+            if mask_num.any():
+                out.loc[mask_num] = pd.to_datetime(s_num.loc[mask_num], unit='D', origin='1899-12-30', errors='coerce')
+            return out
+
+        def _score_aba_corte(df_sheet):
+            if df_sheet is None or df_sheet.empty or df_sheet.shape[1] < 3:
+                return -1, None
+            tmp = df_sheet.iloc[:, :3].copy()
+            d1 = _converter_data_excel(tmp.iloc[:, 1])
+            d2 = _converter_data_excel(tmp.iloc[:, 2])
+            taxa_d1 = float(d1.notna().mean()) if len(d1) else 0.0
+            taxa_d2 = float(d2.notna().mean()) if len(d2) else 0.0
+            labels = tmp.iloc[:, 0].astype(str).str.strip()
+            tem_mes_ano = labels.str.contains(r'\d{1,2}/\d{2,4}|[a-zA-ZçÇ]{3,}\s*[-/]?\s*\d{2,4}', regex=True, na=False).mean()
+            score = taxa_d1 + taxa_d2 + tem_mes_ano
+            return score, tmp
+
+        # Lê todas as abas uma única vez para detectar a aba correta de cortes
+        todas_abas = pd.read_excel(xls, sheet_name=None)
+        todas_abas = {str(k).strip(): v for k, v in todas_abas.items()}
 
         # Aba principal
         aba_principal = None
@@ -250,20 +277,39 @@ def load_data(path):
         if aba_principal is None:
             aba_principal = sheet_names[0]
 
-        # Aba de cortes (Planilha2)
-        aba_cortes = None
-        candidatos_cortes = ['planilha2', 'sheet2', 'corte', 'cortes', 'fatura', 'fat']
-        for s in sheet_names:
-            ns = _norm_sheet_name(s)
-            if ns in candidatos_cortes or any(chave in ns for chave in ['planilha2', 'sheet2', 'corte', 'fatura']):
-                if s != aba_principal:
-                    aba_cortes = s
-                    break
-        if aba_cortes is None and len(sheet_names) > 1:
-            aba_cortes = sheet_names[1]
+        df = todas_abas.get(aba_principal)
+        if df is None or df.empty:
+            raise ValueError(f"Aba principal não pôde ser lida. Abas encontradas: {sheet_names}")
 
-        df = pd.read_excel(xls, sheet_name=aba_principal)
-        cortes = pd.read_excel(xls, sheet_name=aba_cortes) if aba_cortes is not None else pd.DataFrame()
+        # Detecta a aba de cortes por nome OU pelo conteúdo
+        candidatos_por_nome = []
+        for s in sheet_names:
+            if s == aba_principal:
+                continue
+            ns = _norm_sheet_name(s)
+            if ns in ['planilha2', 'sheet2', 'corte', 'cortes', 'fatura', 'fat'] or any(chave in ns for chave in ['planilha2', 'sheet2', 'corte', 'fatura']):
+                candidatos_por_nome.append(s)
+
+        melhor_aba_corte = None
+        melhor_score = -1.0
+
+        # Primeiro tenta candidatos pelo nome
+        for s in candidatos_por_nome:
+            score, _ = _score_aba_corte(todas_abas.get(s))
+            if score > melhor_score:
+                melhor_score = score
+                melhor_aba_corte = s
+
+        # Depois testa todas as abas restantes se necessário
+        for s, df_sheet in todas_abas.items():
+            if s == aba_principal:
+                continue
+            score, _ = _score_aba_corte(df_sheet)
+            if score > melhor_score:
+                melhor_score = score
+                melhor_aba_corte = s
+
+        cortes = todas_abas.get(melhor_aba_corte, pd.DataFrame()) if melhor_aba_corte else pd.DataFrame()
 
     df.columns = df.columns.str.strip()
     if not cortes.empty:
@@ -351,20 +397,6 @@ def load_data(path):
     df = _padronizar_coluna(df, 'Canal')
 
     # =============================
-    # FUNÇÃO AUXILIAR DE DATAS
-    # =============================
-    def _converter_data_excel(serie):
-        s = serie.copy()
-        if pd.api.types.is_numeric_dtype(s):
-            return pd.to_datetime(s, unit='D', origin='1899-12-30', errors='coerce')
-        s_num = pd.to_numeric(s, errors='coerce')
-        out = pd.to_datetime(s, errors='coerce', dayfirst=True)
-        mask_num = s_num.notna() & out.isna()
-        if mask_num.any():
-            out.loc[mask_num] = pd.to_datetime(s_num.loc[mask_num], unit='D', origin='1899-12-30', errors='coerce')
-        return out
-
-    # =============================
     # DATAS PRINCIPAIS
     # =============================
     if 'Data NF' not in df.columns:
@@ -375,30 +407,22 @@ def load_data(path):
     df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
 
     # =============================
-    # CORTE DE FATURA - V7 FINAL SEM FALLBACK
-    # Usa somente Planilha2.
+    # CORTE DE FATURA - V8 SEM FALLBACK E COM DETECÇÃO AUTOMÁTICA DA ABA
+    # Usa somente a aba de cortes detectada.
     # O rótulo do filtro SEMPRE será MM/AAAA, derivado da Data_Fim_Corte.
     # =============================
     df['Mes_Corte_Fatura'] = pd.NA
     df['Mes_Corte_Fatura_Ordem'] = np.nan
 
     if cortes.empty or cortes.shape[1] < 3:
-        raise ValueError("Planilha2 com datas de corte não encontrada ou sem as 3 colunas esperadas.")
-
-    col_inicio = cortes.columns[1]
-    col_corte = cortes.columns[2]
+        raise ValueError(f"Aba de cortes não encontrada ou inválida. Abas encontradas: {sheet_names}")
 
     mapa_corte = cortes.iloc[:, :3].copy()
     mapa_corte.columns = ['Mes_Corte_Original', 'Data_Inicio_Corte', 'Data_Fim_Corte']
     mapa_corte['Data_Inicio_Corte'] = _converter_data_excel(mapa_corte['Data_Inicio_Corte'])
     mapa_corte['Data_Fim_Corte'] = _converter_data_excel(mapa_corte['Data_Fim_Corte'])
     mapa_corte = mapa_corte.dropna(subset=['Data_Inicio_Corte', 'Data_Fim_Corte']).copy()
-
-    # Rótulo final SEMPRE em MM/AAAA a partir da data final do corte
     mapa_corte['Mes_Corte_Fatura'] = mapa_corte['Data_Fim_Corte'].dt.strftime('%m/%Y')
-
-    # Ordenação do mais antigo para o mais novo para gerar a ordem;
-    # o filtro exibirá do mais recente para o mais antigo na sidebar.
     mapa_corte = (
         mapa_corte[['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']]
         .drop_duplicates()
@@ -407,7 +431,7 @@ def load_data(path):
     )
 
     if mapa_corte.empty:
-        raise ValueError("Nenhuma faixa válida de corte foi encontrada na Planilha2.")
+        raise ValueError(f"Nenhuma faixa válida de corte foi encontrada na aba '{melhor_aba_corte}'. Abas encontradas: {sheet_names}")
 
     intervalos = pd.IntervalIndex.from_arrays(
         mapa_corte['Data_Inicio_Corte'],
