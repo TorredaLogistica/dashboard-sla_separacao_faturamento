@@ -227,11 +227,15 @@ if st.button("🔄 Atualizar dados"):
 # CARGA DE DADOS (CORRIGIDA PARA .XLSB E GITHUB)
 # =============================
 
+
 @st.cache_data
 def load_data(path):
     # engine='pyxlsb' é necessário para arquivos .xlsb
-    df = pd.read_excel(path, engine='pyxlsb')
+    df = pd.read_excel(path, sheet_name=0, engine='pyxlsb')
+    cortes = pd.read_excel(path, sheet_name=1, engine='pyxlsb')
+
     df.columns = df.columns.str.strip()
+    cortes.columns = cortes.columns.str.strip()
 
     # =============================
     # SANEAR CATEGORIAS (evita categorias vazias e a palavra 'undefined' em rankings)
@@ -242,7 +246,7 @@ def load_data(path):
         s = (df_[col]
              .fillna(valor_padrao)
              .astype(str)
-             .str.replace(' ', '', regex=False)  # remove NBSP
+             .str.replace('\u00A0', '', regex=False)  # remove NBSP
              .str.strip()
         )
         s = s.replace({
@@ -266,71 +270,111 @@ def load_data(path):
         if _c in df.columns:
             df[_c] = df[_c].replace({'Pme': 'PME', 'pme': 'PME', 'pme.': 'PME', 'p.m.e': 'PME'})
 
-
     # =============================
     # PADRONIZAÇÃO DE PEDIDO (SEM SEPARADOR DE MILHAR)
     # =============================
-    # Garante que o ID do pedido fique como texto e sem formatação: 32310684
     if 'Pedido' not in df.columns and 'Pedidos' in df.columns:
         df['Pedido'] = df['Pedidos']
 
     if 'Pedido' in df.columns:
         df['Pedido'] = normalizar_pedido(df['Pedido'])
 
-    
     # PADRONIZAÇÃO DE CANAIS (evita duplicidade por maiúsculas/minúsculas, espaços e acentos)
     import unicodedata, re
+
     def _norm_key(v):
         s = '' if v is None else str(v)
         s = s.strip()
         s = re.sub(r'\s+', ' ', s)
         s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii')
         return s.lower()
-    
+
     def _beautify(v):
         s = '' if v is None else str(v).strip()
-        if not s: return s
-        # padronização simples em Title Case (com exceções)
+        if not s:
+            return s
         low = _norm_key(s)
-        # exceções conhecidas (ajuste aqui se quiser)
-        if low in ['ecommerce', 'e-commerce', 'e commerce']: return 'Ecommerce'
-        if low in ['loja propria', 'loja própria']: return 'Loja Própria'
-        if low in ['agente autorizado', 'agentes autorizados', 'agente autorizados']: return 'Agente Autorizado'
-        if low in ['pme', 'p.m.e', 'pme.']: return 'PME'  # mantém sigla
-        # Title Case geral
+        if low in ['ecommerce', 'e-commerce', 'e commerce']:
+            return 'Ecommerce'
+        if low in ['loja propria', 'loja própria']:
+            return 'Loja Própria'
+        if low in ['agente autorizado', 'agentes autorizados', 'agente autorizados']:
+            return 'Agente Autorizado'
+        if low in ['pme', 'p.m.e', 'pme.']:
+            return 'PME'
         words = s.lower().split(' ')
-        keep_lower = {'de','da','do','das','dos','e'}
+        keep_lower = {'de', 'da', 'do', 'das', 'dos', 'e'}
         words2 = [w if w in keep_lower else w.capitalize() for w in words]
         return ' '.join(words2)
-    
+
     def _padronizar_coluna(df_, col):
-        if col not in df_.columns: return df_
+        if col not in df_.columns:
+            return df_
         orig = df_[col].astype(str).fillna('').map(lambda x: x.strip())
         key = orig.map(_norm_key)
-        # escolhe o valor mais frequente por chave normalizada
         canon = orig.groupby(key).agg(lambda s: s.value_counts().index[0] if len(s.value_counts()) else '')
         canon = canon.map(_beautify)
         df_[col] = key.map(canon).fillna(orig.map(_beautify))
         return df_
-    
+
     df = _padronizar_coluna(df, 'Canal de Atuacao')
     df = _padronizar_coluna(df, 'Canal')
-    
-    # CORREÇÃO DATA 1970: Converte números seriais do Excel para data real
+
+    # =============================
+    # DATAS PRINCIPAIS
+    # =============================
+    if 'Data NF' not in df.columns:
+        raise KeyError("Coluna 'Data NF' não encontrada na Planilha1.")
+
     if pd.api.types.is_numeric_dtype(df['Data NF']):
-        df['Data NF'] = pd.to_datetime(df['Data NF'], unit='D', origin='1899-12-30')
+        df['Data NF'] = pd.to_datetime(df['Data NF'], unit='D', origin='1899-12-30', errors='coerce')
     else:
-        df['Data NF'] = pd.to_datetime(df['Data NF'])
-        
+        df['Data NF'] = pd.to_datetime(df['Data NF'], errors='coerce', dayfirst=True)
+
+    df = df[df['Data NF'].notna()].copy()
     df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
-    
+
+    # =============================
+    # ENQUADRAMENTO POR CORTE DE FATURA (Planilha2)
+    # Coluna A = Mês/Ano do corte
+    # Coluna B = Início
+    # Coluna C = Corte
+    # =============================
+    df['Mes_Corte_Fatura'] = pd.NA
+    df['Mes_Corte_Fatura_Ordem'] = np.nan
+
+    if cortes.shape[1] >= 3:
+        col_mes_corte = cortes.columns[0]
+        col_inicio = cortes.columns[1]
+        col_corte = cortes.columns[2]
+
+        mapa_corte = cortes[[col_mes_corte, col_inicio, col_corte]].copy()
+        mapa_corte.columns = ['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']
+
+        mapa_corte['Data_Inicio_Corte'] = pd.to_datetime(mapa_corte['Data_Inicio_Corte'], errors='coerce', dayfirst=True)
+        mapa_corte['Data_Fim_Corte'] = pd.to_datetime(mapa_corte['Data_Fim_Corte'], errors='coerce', dayfirst=True)
+        mapa_corte = mapa_corte.dropna(subset=['Mes_Corte_Fatura', 'Data_Inicio_Corte', 'Data_Fim_Corte']).copy()
+        mapa_corte['Mes_Corte_Fatura'] = mapa_corte['Mes_Corte_Fatura'].astype(str).str.strip()
+        mapa_corte = mapa_corte.sort_values('Data_Fim_Corte').reset_index(drop=True)
+
+        for _, linha_corte in mapa_corte.iterrows():
+            mask_corte = (
+                (df['Data NF'] >= linha_corte['Data_Inicio_Corte']) &
+                (df['Data NF'] <= linha_corte['Data_Fim_Corte'])
+            )
+            df.loc[mask_corte, 'Mes_Corte_Fatura'] = linha_corte['Mes_Corte_Fatura']
+
+        ordem_corte = mapa_corte[['Mes_Corte_Fatura', 'Data_Fim_Corte']].drop_duplicates().sort_values('Data_Fim_Corte')
+        mapa_ordem = {mes: idx + 1 for idx, mes in enumerate(ordem_corte['Mes_Corte_Fatura'].tolist())}
+        df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem)
+
     # Extrai apenas o número depois do D+
-    df["aging_num"] = df["Aging_Ajustado_D+"].astype(str).str.extract(r"D\+(\d+)").astype(int)
+    df['aging_num'] = df['Aging_Ajustado_D+'].astype(str).str.extract(r'D\+(\d+)').astype(int)
 
     # Flags corretas
-    df["flag_d0"] = df["aging_num"] == 0
-    df["flag_d1"] = df["aging_num"] == 1
-    df["flag_d2"] = df["aging_num"] == 2
+    df['flag_d0'] = df['aging_num'] == 0
+    df['flag_d1'] = df['aging_num'] == 1
+    df['flag_d2'] = df['aging_num'] == 2
     return df
 
 # Para o GitHub, o arquivo deve estar na raiz do repositório
@@ -342,9 +386,11 @@ if not os.path.exists(caminho_arquivo):
 
 df = load_data(caminho_arquivo)
 
+
 # =============================
 # SIDEBAR
 # =============================
+
 with st.sidebar:
     if os.path.exists("logo_claro.png"):
         st.image("logo_claro.png", use_container_width=True)
@@ -356,16 +402,39 @@ with st.sidebar:
         st.session_state['modo_mobile'] = auto_mobile
     modo_mobile = st.checkbox('📱 Modo celular (auto)', key='modo_mobile', help='Ativado automaticamente quando detectado acesso por celular. Desmarque para forçar modo desktop.')
 
-    
     aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos"], horizontal=True)
-    lista_meses = sorted(df['Mes_Ano'].unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
+    lista_meses = sorted(df['Mes_Ano'].dropna().unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
+
+    tipo_volumetria = "Calendário (Data NF)"
+    meses_selecionados = []
+
     if aba == "📦 Volumetria de Pedidos":
-        meses_selecionados = st.multiselect("Mês de Referência", lista_meses, default=[lista_meses[0]] if lista_meses else [])
-        mes_selecionado = meses_selecionados[0] if meses_selecionados else (lista_meses[0] if lista_meses else None)
+        tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False)
+
+        if tipo_volumetria == "Calendário (Data NF)":
+            meses_selecionados = st.multiselect(
+                "Mês de Referência",
+                lista_meses,
+                default=[lista_meses[0]] if lista_meses else []
+            )
+        else:
+            base_corte_sidebar = (
+                df.loc[df['Mes_Corte_Fatura'].notna(), ['Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem']]
+                  .drop_duplicates()
+                  .sort_values('Mes_Corte_Fatura_Ordem', ascending=False)
+            )
+            lista_meses_corte = base_corte_sidebar['Mes_Corte_Fatura'].tolist()
+            meses_selecionados = st.multiselect(
+                "Mês de Corte da Fatura",
+                lista_meses_corte,
+                default=[lista_meses_corte[0]] if lista_meses_corte else []
+            )
+
+        mes_selecionado = meses_selecionados[0] if meses_selecionados else None
     else:
         mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
         meses_selecionados = [mes_selecionado] if mes_selecionado else []
-    
+
     filtros = ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']
     mask = np.ones(len(df), dtype=bool)
     filtros_selecionados = {}
@@ -374,10 +443,13 @@ with st.sidebar:
         if col in df.columns:
             vals = st.multiselect(col, sorted(df[col].dropna().unique()))
             filtros_selecionados[col] = vals
-            if vals: mask &= df[col].isin(vals)
+            if vals:
+                mask &= df[col].isin(vals)
 
 dff_global = df[mask].copy()
 empresas_filtradas = filtros_selecionados.get('Empresa', [])
+
+
 
 # =============================
 # VOLUMETRIA DE PEDIDOS (NOVA VISÃO)
@@ -385,59 +457,110 @@ empresas_filtradas = filtros_selecionados.get('Empresa', [])
 if aba == "📦 Volumetria de Pedidos":
     st.subheader("📦 Volumetria de Pedidos")
 
-    base_vol = dff_global[dff_global['Mes_Ano'].isin(meses_selecionados)].copy()
+    def _coluna_canal(df_local):
+        if 'Canal de Atuacao' in df_local.columns:
+            return 'Canal de Atuacao'
+        if 'Canal' in df_local.columns:
+            return 'Canal'
+        st.error("Coluna de canal não encontrada (esperado: 'Canal de Atuacao' ou 'Canal').")
+        st.stop()
+
+    def _contar_volume(df_local, group_cols):
+        if 'Pedido' in df_local.columns:
+            return df_local.groupby(group_cols)['Pedido'].count().reset_index(name='Volume')
+        return df_local.groupby(group_cols).size().reset_index(name='Volume')
+
+    def _formatar_figura_volumetria(fig, eixo_x_titulo, altura=None, rotacionar_x=False, legenda_titulo='Mês'):
+        fig.update_layout(
+            height=altura or (650 if modo_mobile else 560),
+            title_x=0.0,
+            xaxis_title=eixo_x_titulo,
+            yaxis_title='',
+            legend_title_text=legenda_titulo
+        )
+
+        if modo_mobile:
+            fig.update_traces(textposition='outside', textangle=-90, textfont_size=11, cliponaxis=False)
+            fig.update_layout(margin=dict(l=30, r=10, t=70, b=120), legend_orientation='h', legend_y=-0.25)
+        else:
+            fig.update_traces(textposition='outside', textfont_size=13)
+
+        if rotacionar_x:
+            fig.update_xaxes(tickangle=-35)
+
+        return aplicar_estilo_plotly(fig, modo_mobile)
+
+    coluna_periodo = 'Mes_Ano'
+    legenda_periodo = 'Mês'
+    titulo_geral = 'Volumetria de Pedidos Geral'
+    titulo_canal = 'Volumetria de Pedidos por Canal'
+
+    if tipo_volumetria == "Corte de Fatura":
+        coluna_periodo = 'Mes_Corte_Fatura'
+        legenda_periodo = 'Mês de Corte'
+        titulo_geral = 'Volumetria de Pedidos Geral - Corte de Fatura'
+        titulo_canal = 'Volumetria de Pedidos por Canal - Corte de Fatura'
+
+    base_vol = dff_global[dff_global[coluna_periodo].isin(meses_selecionados)].copy()
     if base_vol.empty:
         st.warning("Nenhum dado encontrado para os filtros selecionados.")
         st.stop()
 
-    # Define a coluna de canal (prioriza Canal de Atuacao; fallback para Canal)
-    if 'Canal de Atuacao' in base_vol.columns:
-        col_canal = 'Canal de Atuacao'
-    elif 'Canal' in base_vol.columns:
-        col_canal = 'Canal'
+    if coluna_periodo == 'Mes_Ano':
+        ordem_periodos = sorted(meses_selecionados, key=lambda x: datetime.strptime(x, '%m/%Y')) if meses_selecionados else None
     else:
-        st.error("Coluna de canal não encontrada (esperado: 'Canal de Atuacao' ou 'Canal').")
-        st.stop()
+        ordem_periodos = (
+            base_vol[[coluna_periodo, 'Mes_Corte_Fatura_Ordem']]
+            .dropna()
+            .drop_duplicates()
+            .sort_values('Mes_Corte_Fatura_Ordem')[coluna_periodo]
+            .tolist()
+        )
 
-    # Conta pedidos (se existir coluna Pedido) ou linhas (fallback)
-    if 'Pedido' in base_vol.columns:
-        vol = (base_vol.groupby([col_canal, 'Mes_Ano'])['Pedido'].count().reset_index(name='Volume'))
-    else:
-        vol = (base_vol.groupby([col_canal, 'Mes_Ano']).size().reset_index(name='Volume'))
+    category_orders = {coluna_periodo: ordem_periodos} if ordem_periodos else None
+    col_canal = _coluna_canal(base_vol)
 
-    ordem_meses = sorted(meses_selecionados, key=lambda x: datetime.strptime(x, '%m/%Y')) if meses_selecionados else None
-    cat_orders = {'Mes_Ano': ordem_meses} if ordem_meses else None
+    # Visão geral (sem abertura por canal)
+    vol_geral = _contar_volume(base_vol, [coluna_periodo])
+    fig_geral = px.bar(
+        vol_geral,
+        x=coluna_periodo,
+        y='Volume',
+        color=coluna_periodo,
+        text='Volume',
+        title=titulo_geral,
+        category_orders=category_orders
+    )
+    fig_geral = _formatar_figura_volumetria(
+        fig_geral,
+        eixo_x_titulo=('Mês de Referência' if coluna_periodo == 'Mes_Ano' else 'Mês de Corte da Fatura'),
+        altura=(500 if not modo_mobile else 620),
+        rotacionar_x=False,
+        legenda_titulo=legenda_periodo
+    )
+    st.plotly_chart(fig_geral, use_container_width=True)
 
-    fig_volume = px.bar(
-        vol,
+    # Visão detalhada por canal
+    vol_canal = _contar_volume(base_vol, [col_canal, coluna_periodo])
+    fig_canal = px.bar(
+        vol_canal,
         x=col_canal,
         y='Volume',
-        color='Mes_Ano',
+        color=coluna_periodo,
         barmode='group',
         text='Volume',
-        title='VOLUMETRIA DE PEDIDOS',
-        category_orders=cat_orders
+        title=titulo_canal,
+        category_orders=category_orders
     )
-
-    fig_volume.update_layout(
-        height=(650 if modo_mobile else 560),
-        title_x=0.0,
-        xaxis_title='Canal de Atuação',
-        yaxis_title='',
-        legend_title_text='Mês'
+    fig_canal = _formatar_figura_volumetria(
+        fig_canal,
+        eixo_x_titulo='Canal de Atuação',
+        altura=(650 if not modo_mobile else 720),
+        rotacionar_x=True,
+        legenda_titulo=legenda_periodo
     )
-    if modo_mobile:
-        # No celular: rótulos na vertical (leitura de baixo para cima)
-        fig_volume.update_traces(textposition='outside', textangle=-90, textfont_size=11, cliponaxis=False)
-        fig_volume.update_layout(margin=dict(l=30, r=10, t=70, b=120), legend_orientation='h', legend_y=-0.25)
-    else:
-        fig_volume.update_traces(textposition='outside', textfont_size=13)
-
-    fig_volume = aplicar_estilo_plotly(fig_volume, modo_mobile)
-
-    st.plotly_chart(fig_volume, use_container_width=True)
+    st.plotly_chart(fig_canal, use_container_width=True)
     st.stop()
-
 
 # =============================
 # DASHBOARD PRINCIPAL
