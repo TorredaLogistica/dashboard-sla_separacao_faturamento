@@ -354,22 +354,21 @@ def load_data(path):
     df['Mes_Ano'] = df['Data NF'].dt.strftime('%m/%Y')
 
     # =============================
-    # CORTE DE FATURA (VERSÃO ESTÁVEL)
-    # - não quebra o carregamento da base
-    # - tenta detectar automaticamente a aba de cortes
-    # - se localizar, gera SEMPRE em MM/AAAA a partir da Data_Fim_Corte
+    # CORTE DE FATURA (V10 - SAFE)
+    # - nunca quebra o app
+    # - tenta ler as abas uma a uma (mais estável no pyxlsb)
+    # - usa SOMENTE a melhor aba detectada para montar MM/AAAA
     # =============================
     df['Mes_Corte_Fatura'] = pd.NA
     df['Mes_Corte_Fatura_Ordem'] = np.nan
     df.attrs['abas_encontradas'] = ''
     df.attrs['aba_corte_detectada'] = ''
+    df.attrs['erro_corte'] = ''
 
     try:
         with pd.ExcelFile(path, engine='pyxlsb') as xls2:
             sheet_names = [str(s).strip() for s in xls2.sheet_names]
             df.attrs['abas_encontradas'] = ' | '.join(sheet_names)
-            todas_abas = pd.read_excel(xls2, sheet_name=None)
-            todas_abas = {str(k).strip(): v for k, v in todas_abas.items()}
 
             # Tenta identificar a aba principal para excluí-la da busca
             aba_principal = sheet_names[0] if sheet_names else ''
@@ -381,18 +380,27 @@ def load_data(path):
 
             melhor_aba_corte = None
             melhor_score = -1.0
-            for s, df_sheet in todas_abas.items():
+            melhor_df_corte = None
+
+            for s in sheet_names:
                 if s == aba_principal:
                     continue
-                score = _score_aba_corte(df_sheet)
-                if score > melhor_score:
-                    melhor_score = score
-                    melhor_aba_corte = s
+                try:
+                    df_sheet = pd.read_excel(xls2, sheet_name=s)
+                    score = _score_aba_corte(df_sheet)
+                    if score > melhor_score:
+                        melhor_score = score
+                        melhor_aba_corte = s
+                        melhor_df_corte = df_sheet.copy()
+                except Exception:
+                    continue
 
-            if melhor_aba_corte is not None and melhor_score > 0.80:
+            if melhor_aba_corte is not None and melhor_score > 0.80 and melhor_df_corte is not None:
                 df.attrs['aba_corte_detectada'] = melhor_aba_corte
-                cortes = todas_abas.get(melhor_aba_corte, pd.DataFrame()).copy()
-                if not cortes.empty and cortes.shape[1] >= 3:
+                cortes = melhor_df_corte.copy()
+                cortes.columns = [str(c).strip() for c in cortes.columns]
+
+                if cortes.shape[1] >= 3:
                     mapa_corte = cortes.iloc[:, :3].copy()
                     mapa_corte.columns = ['Mes_Corte_Original', 'Data_Inicio_Corte', 'Data_Fim_Corte']
                     mapa_corte['Data_Inicio_Corte'] = _converter_data_excel(mapa_corte['Data_Inicio_Corte'])
@@ -420,9 +428,10 @@ def load_data(path):
 
                         mapa_ordem = {mes: pos + 1 for pos, mes in enumerate(mapa_corte['Mes_Corte_Fatura'].tolist())}
                         df['Mes_Corte_Fatura_Ordem'] = df['Mes_Corte_Fatura'].map(mapa_ordem)
-    except Exception:
-        # Mantém o app carregando normalmente mesmo se a aba de cortes não puder ser lida
-        pass
+            else:
+                df.attrs['erro_corte'] = 'Nenhuma aba de corte válida foi detectada automaticamente.'
+    except Exception as e:
+        df.attrs['erro_corte'] = str(e)
 
     # Extrai apenas o número depois do D+
     df['aging_num'] = df['Aging_Ajustado_D+'].astype(str).str.extract(r'D\+(\d+)').astype(int)
@@ -485,10 +494,13 @@ with st.sidebar:
                 st.caption("⚠️ Não foi possível detectar automaticamente a aba de cortes neste arquivo.")
                 abas_detectadas = df.attrs.get('abas_encontradas', '')
                 aba_corte = df.attrs.get('aba_corte_detectada', '')
+                erro_corte = df.attrs.get('erro_corte', '')
                 if abas_detectadas:
                     st.caption(f"Abas detectadas no arquivo: {abas_detectadas}")
                 if aba_corte:
                     st.caption(f"Aba de corte identificada: {aba_corte}")
+                if erro_corte:
+                    st.caption(f"Detalhe: {erro_corte}")
 
         mes_selecionado = meses_selecionados[0] if meses_selecionados else None
     else:
