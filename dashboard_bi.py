@@ -613,13 +613,15 @@ if aba == "📦 Volumetria de Pedidos":
         st.stop()
 
     if coluna_periodo == 'Mes_Ano':
+        # Calendário: do mais antigo para o mais novo (esquerda -> direita)
         ordem_periodos = sorted(meses_selecionados, key=lambda x: datetime.strptime(x, '%m/%Y')) if meses_selecionados else None
     else:
+        # Corte de Fatura: do mais antigo para o mais novo (esquerda -> direita)
         ordem_periodos = (
             base_vol[[coluna_periodo, 'Mes_Corte_Fatura_Ordem']]
             .dropna()
             .drop_duplicates()
-            .sort_values('Mes_Corte_Fatura_Ordem', ascending=False)[coluna_periodo]
+            .sort_values('Mes_Corte_Fatura_Ordem', ascending=True)[coluna_periodo]
             .tolist()
         )
 
