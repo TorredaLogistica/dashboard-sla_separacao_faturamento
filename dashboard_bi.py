@@ -375,7 +375,11 @@ def load_data(path):
         mask_idx = idx >= 0
         if mask_idx.any():
             valores_mes = mapa_corte['Mes_Corte_Fatura'].to_numpy()
+            valores_inicio = mapa_corte['Data_Inicio_Corte'].to_numpy()
+            valores_fim = mapa_corte['Data_Fim_Corte'].to_numpy()
             df_base.loc[mask_idx, 'Mes_Corte_Fatura'] = valores_mes[idx[mask_idx]]
+            df_base.loc[mask_idx, 'Data_Inicio_Corte_Mapa'] = valores_inicio[idx[mask_idx]]
+            df_base.loc[mask_idx, 'Data_Fim_Corte_Mapa'] = valores_fim[idx[mask_idx]]
 
         mapa_ordem = {mes: pos + 1 for pos, mes in enumerate(mapa_corte['Mes_Corte_Fatura'].tolist())}
         df_base['Mes_Corte_Fatura_Ordem'] = df_base['Mes_Corte_Fatura'].map(mapa_ordem)
@@ -612,6 +616,12 @@ if aba == "📦 Volumetria de Pedidos":
             return df_local.groupby(group_cols)['Pedido'].count().reset_index(name='Volume')
         return df_local.groupby(group_cols).size().reset_index(name='Volume')
 
+    def _formatar_inteiro_local(valor):
+        try:
+            return f"{int(round(float(valor))):,}".replace(',', '.')
+        except:
+            return str(valor)
+
     def _calcular_estilo_texto_volumetria(df_plot, col_categoria, col_valor='Volume', agrupado=False):
         """Mantém tamanho uniforme por gráfico, reduzindo somente quando não couber; se ainda truncar, rotaciona na vertical."""
         if df_plot is None or df_plot.empty or col_categoria not in df_plot.columns or col_valor not in df_plot.columns:
@@ -671,6 +681,103 @@ if aba == "📦 Volumetria de Pedidos":
             fig.update_xaxes(tickangle=-35)
         return aplicar_estilo_plotly(fig, modo_mobile)
 
+    def _obter_projecao_periodo(df_local, coluna_periodo, periodo_ref):
+        if df_local is None or df_local.empty or not periodo_ref:
+            return None
+
+        base_periodo = df_local[df_local[coluna_periodo] == periodo_ref].copy()
+        if base_periodo.empty or 'Data NF' not in base_periodo.columns:
+            return None
+
+        ultima_data = pd.to_datetime(base_periodo['Data NF'], errors='coerce').dropna().max()
+        if pd.isna(ultima_data):
+            return None
+
+        volume_atual = int(base_periodo['Pedido'].count()) if 'Pedido' in base_periodo.columns else int(len(base_periodo))
+
+        if coluna_periodo == 'Mes_Ano':
+            periodo_dt = datetime.strptime(str(periodo_ref), '%m/%Y')
+            data_inicio = pd.Timestamp(periodo_dt.year, periodo_dt.month, 1)
+            data_fim = data_inicio + pd.offsets.MonthEnd(1)
+        else:
+            if 'Data_Inicio_Corte_Mapa' not in base_periodo.columns or 'Data_Fim_Corte_Mapa' not in base_periodo.columns:
+                return None
+            data_inicio = pd.to_datetime(base_periodo['Data_Inicio_Corte_Mapa'], errors='coerce').dropna().min()
+            data_fim = pd.to_datetime(base_periodo['Data_Fim_Corte_Mapa'], errors='coerce').dropna().max()
+            if pd.isna(data_inicio) or pd.isna(data_fim):
+                return None
+
+        ultima_data_util = min(ultima_data.normalize(), pd.Timestamp(data_fim).normalize())
+        data_inicio = pd.Timestamp(data_inicio).normalize()
+        data_fim = pd.Timestamp(data_fim).normalize()
+
+        dias_decorridos = int((ultima_data_util - data_inicio).days + 1)
+        dias_totais = int((data_fim - data_inicio).days + 1)
+
+        if dias_decorridos <= 0 or dias_totais <= 0 or dias_decorridos >= dias_totais:
+            return None
+
+        volume_projetado = int(round(volume_atual / dias_decorridos * dias_totais))
+        if volume_projetado <= volume_atual:
+            return None
+
+        return {
+            'periodo': periodo_ref,
+            'volume_atual': volume_atual,
+            'volume_projetado': volume_projetado,
+            'dias_decorridos': dias_decorridos,
+            'dias_totais': dias_totais,
+            'ultima_data': ultima_data_util,
+        }
+
+    def _adicionar_linha_projecao(fig, df_local, df_plot, coluna_periodo, ordem_periodos):
+        if df_plot is None or df_plot.empty or coluna_periodo not in df_plot.columns:
+            return fig
+
+        periodos_plot = [p for p in (ordem_periodos or df_plot[coluna_periodo].dropna().tolist()) if p in set(df_plot[coluna_periodo].dropna().tolist())]
+        if not periodos_plot:
+            return fig
+
+        ultimo_periodo = periodos_plot[-1]
+        proj = _obter_projecao_periodo(df_local, coluna_periodo, ultimo_periodo)
+        if not proj:
+            return fig
+
+        qtd_periodos = max(len(periodos_plot), 1)
+        indice_ultimo = qtd_periodos - 1
+        centro = (indice_ultimo + 0.5) / qtd_periodos
+        meia_linha = min(0.11, 0.35 / qtd_periodos)
+        x0 = max(0.0, centro - meia_linha)
+        x1 = min(1.0, centro + meia_linha)
+        y_proj = proj['volume_projetado']
+        y_max_atual = max(float(df_plot['Volume'].max()), float(y_proj))
+
+        fig.add_shape(
+            type='line',
+            xref='paper',
+            yref='y',
+            x0=x0,
+            x1=x1,
+            y0=y_proj,
+            y1=y_proj,
+            line=dict(color='#444444', width=2, dash='dot')
+        )
+        fig.add_annotation(
+            x=centro,
+            y=y_proj,
+            xref='paper',
+            yref='y',
+            text=f"Projeção: {_formatar_inteiro_local(y_proj)}",
+            showarrow=False,
+            yshift=14 if not modo_mobile else 10,
+            font=dict(size=14 if not modo_mobile else 11, color='#2c3e50'),
+            bgcolor='rgba(255,255,255,0.85)',
+            bordercolor='rgba(68,68,68,0.25)',
+            borderwidth=1,
+        )
+        fig.update_yaxes(range=[0, y_max_atual * 1.18])
+        return fig
+
     coluna_periodo = 'Mes_Ano'
     legenda_periodo = 'Mês'
     titulo_geral = 'Volumetria de Pedidos Geral'
@@ -705,12 +812,29 @@ if aba == "📦 Volumetria de Pedidos":
 
     vol_geral = _contar_volume(base_vol, [coluna_periodo])
     fig_geral = px.bar(vol_geral, x=coluna_periodo, y='Volume', color=coluna_periodo, text='Volume', title=titulo_geral, category_orders=category_orders)
-    fig_geral = _formatar_figura_volumetria(fig_geral, vol_geral, coluna_periodo, eixo_x_titulo=('Mês de Referência' if coluna_periodo == 'Mes_Ano' else 'Mês de Corte da Fatura'), altura=(500 if not modo_mobile else 620), legenda_titulo=legenda_periodo)
+    fig_geral = _formatar_figura_volumetria(
+        fig_geral,
+        vol_geral,
+        coluna_periodo,
+        eixo_x_titulo=('Mês de Referência' if coluna_periodo == 'Mes_Ano' else 'Mês de Corte da Fatura'),
+        altura=(500 if not modo_mobile else 620),
+        legenda_titulo=legenda_periodo
+    )
+    fig_geral = _adicionar_linha_projecao(fig_geral, base_vol, vol_geral, coluna_periodo, ordem_periodos)
     st.plotly_chart(fig_geral, use_container_width=True)
 
     vol_canal = _contar_volume(base_vol, [col_canal, coluna_periodo])
     fig_canal = px.bar(vol_canal, x=col_canal, y='Volume', color=coluna_periodo, barmode='group', text='Volume', title=titulo_canal, category_orders=category_orders)
-    fig_canal = _formatar_figura_volumetria(fig_canal, vol_canal, col_canal, eixo_x_titulo='Canal de Atuação', altura=(650 if not modo_mobile else 720), rotacionar_x=True, legenda_titulo=legenda_periodo, agrupado=True)
+    fig_canal = _formatar_figura_volumetria(
+        fig_canal,
+        vol_canal,
+        col_canal,
+        eixo_x_titulo='Canal de Atuação',
+        altura=(650 if not modo_mobile else 720),
+        rotacionar_x=True,
+        legenda_titulo=legenda_periodo,
+        agrupado=True
+    )
     st.plotly_chart(fig_canal, use_container_width=True)
     st.stop()
 
