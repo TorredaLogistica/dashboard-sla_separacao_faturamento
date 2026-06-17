@@ -585,13 +585,53 @@ if aba == "📦 Volumetria de Pedidos":
             return df_local.groupby(group_cols)['Pedido'].count().reset_index(name='Volume')
         return df_local.groupby(group_cols).size().reset_index(name='Volume')
 
-    def _formatar_figura_volumetria(fig, eixo_x_titulo, altura=None, rotacionar_x=False, legenda_titulo='Mês'):
-        fig.update_layout(height=altura or (650 if modo_mobile else 560), title_x=0.0, xaxis_title=eixo_x_titulo, yaxis_title='', legend_title_text=legenda_titulo)
+    def _rotacionar_texto_valores_volumetria(df_plot, col_categoria, col_valor='Volume', agrupado=False):
+        """Define rotação vertical dos rótulos quando houver risco de truncamento."""
+        if df_plot is None or df_plot.empty or col_categoria not in df_plot.columns or col_valor not in df_plot.columns:
+            return False
+
+        valores = pd.to_numeric(df_plot[col_valor], errors='coerce').fillna(0)
+        if valores.empty:
+            return False
+
+        max_chars = int(valores.astype(int).astype(str).str.len().max())
+        qtd_categorias = max(int(df_plot[col_categoria].nunique()), 1)
+        multiplicador_barras = 3 if agrupado else 1
+
+        largura_util = 430 if modo_mobile else 1180
+        barras_estimadas = max(qtd_categorias * multiplicador_barras, 1)
+        px_por_barra = largura_util / barras_estimadas
+
+        font_size_valor = 22 if modo_mobile else 26
+        largura_estimada_texto = max_chars * font_size_valor * 0.62
+
+        return largura_estimada_texto > (px_por_barra * 0.85)
+
+    def _formatar_figura_volumetria(fig, df_plot, col_categoria, eixo_x_titulo, altura=None, rotacionar_x=False, legenda_titulo='Mês', agrupado=False):
+        texto_vertical = _rotacionar_texto_valores_volumetria(df_plot, col_categoria, 'Volume', agrupado=agrupado)
+        font_size_valor = 22 if modo_mobile else 26
+
+        fig.update_layout(
+            height=altura or (650 if modo_mobile else 560),
+            title_x=0.0,
+            xaxis_title=eixo_x_titulo,
+            yaxis_title='',
+            legend_title_text=legenda_titulo,
+        )
+
+        fig.update_traces(
+            textposition='outside',
+            textangle=-90 if texto_vertical else 0,
+            textfont_size=font_size_valor,
+            cliponaxis=False,
+            texttemplate='%{text}',
+        )
+
         if modo_mobile:
-            fig.update_traces(textposition='outside', textangle=-90, textfont_size=11, cliponaxis=False)
             fig.update_layout(margin=dict(l=30, r=10, t=70, b=120), legend_orientation='h', legend_y=-0.25)
         else:
-            fig.update_traces(textposition='outside', textfont_size=13)
+            fig.update_layout(margin=dict(l=40, r=20, t=70, b=80))
+
         if rotacionar_x:
             fig.update_xaxes(tickangle=-35)
         return aplicar_estilo_plotly(fig, modo_mobile)
@@ -630,12 +670,12 @@ if aba == "📦 Volumetria de Pedidos":
 
     vol_geral = _contar_volume(base_vol, [coluna_periodo])
     fig_geral = px.bar(vol_geral, x=coluna_periodo, y='Volume', color=coluna_periodo, text='Volume', title=titulo_geral, category_orders=category_orders)
-    fig_geral = _formatar_figura_volumetria(fig_geral, eixo_x_titulo=('Mês de Referência' if coluna_periodo == 'Mes_Ano' else 'Mês de Corte da Fatura'), altura=(500 if not modo_mobile else 620), legenda_titulo=legenda_periodo)
+    fig_geral = _formatar_figura_volumetria(fig_geral, vol_geral, coluna_periodo, eixo_x_titulo=('Mês de Referência' if coluna_periodo == 'Mes_Ano' else 'Mês de Corte da Fatura'), altura=(500 if not modo_mobile else 620), legenda_titulo=legenda_periodo)
     st.plotly_chart(fig_geral, use_container_width=True)
 
     vol_canal = _contar_volume(base_vol, [col_canal, coluna_periodo])
     fig_canal = px.bar(vol_canal, x=col_canal, y='Volume', color=coluna_periodo, barmode='group', text='Volume', title=titulo_canal, category_orders=category_orders)
-    fig_canal = _formatar_figura_volumetria(fig_canal, eixo_x_titulo='Canal de Atuação', altura=(650 if not modo_mobile else 720), rotacionar_x=True, legenda_titulo=legenda_periodo)
+    fig_canal = _formatar_figura_volumetria(fig_canal, vol_canal, col_canal, eixo_x_titulo='Canal de Atuação', altura=(650 if not modo_mobile else 720), rotacionar_x=True, legenda_titulo=legenda_periodo, agrupado=True)
     st.plotly_chart(fig_canal, use_container_width=True)
     st.stop()
 
