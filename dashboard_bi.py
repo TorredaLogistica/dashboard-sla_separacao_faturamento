@@ -770,7 +770,7 @@ if aba == "📦 Volumetria de Pedidos":
             text=f"Projeção: {_formatar_inteiro_local(y_proj)}",
             showarrow=False,
             yshift=14 if not modo_mobile else 10,
-            font=dict(size=14 if not modo_mobile else 11, color='#2c3e50'),
+            font=dict(size=_calcular_estilo_texto_volumetria(df_plot, coluna_periodo, 'Volume', agrupado=False)['font_size'], color='#2c3e50'),
             bgcolor='rgba(255,255,255,0.85)',
             bordercolor='rgba(68,68,68,0.25)',
             borderwidth=1,
