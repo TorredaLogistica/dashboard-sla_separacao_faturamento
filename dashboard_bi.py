@@ -585,16 +585,16 @@ if aba == "📦 Volumetria de Pedidos":
             return df_local.groupby(group_cols)['Pedido'].count().reset_index(name='Volume')
         return df_local.groupby(group_cols).size().reset_index(name='Volume')
 
-    def _rotacionar_texto_valores_volumetria(df_plot, col_categoria, col_valor='Volume', agrupado=False):
-        """Define rotação vertical dos rótulos quando houver risco de truncamento."""
+    def _calcular_estilo_texto_volumetria(df_plot, col_categoria, col_valor='Volume', agrupado=False):
+        """Mantém tamanho uniforme por gráfico, reduzindo somente quando não couber; se ainda truncar, rotaciona na vertical."""
         if df_plot is None or df_plot.empty or col_categoria not in df_plot.columns or col_valor not in df_plot.columns:
-            return False
+            return {'font_size': (18 if modo_mobile else 21), 'textangle': 0}
 
         valores = pd.to_numeric(df_plot[col_valor], errors='coerce').fillna(0)
         if valores.empty:
-            return False
+            return {'font_size': (18 if modo_mobile else 21), 'textangle': 0}
 
-        max_chars = int(valores.astype(int).astype(str).str.len().max())
+        max_chars = int(valores.round(0).astype(int).astype(str).str.len().max())
         qtd_categorias = max(int(df_plot[col_categoria].nunique()), 1)
         multiplicador_barras = 3 if agrupado else 1
 
@@ -602,14 +602,22 @@ if aba == "📦 Volumetria de Pedidos":
         barras_estimadas = max(qtd_categorias * multiplicador_barras, 1)
         px_por_barra = largura_util / barras_estimadas
 
-        font_size_valor = 22 if modo_mobile else 26
-        largura_estimada_texto = max_chars * font_size_valor * 0.62
+        font_size_base = 18 if modo_mobile else 21  # 20% menor que o ajuste anterior
+        font_size_reduzida = max(14 if modo_mobile else 17, int(round(font_size_base * 0.80)))
 
-        return largura_estimada_texto > (px_por_barra * 0.85)
+        def largura_texto_estimada(font_size):
+            return max_chars * font_size * 0.62
+
+        if largura_texto_estimada(font_size_base) <= (px_por_barra * 0.85):
+            return {'font_size': font_size_base, 'textangle': 0}
+
+        if largura_texto_estimada(font_size_reduzida) <= (px_por_barra * 0.85):
+            return {'font_size': font_size_reduzida, 'textangle': 0}
+
+        return {'font_size': font_size_reduzida, 'textangle': -90}
 
     def _formatar_figura_volumetria(fig, df_plot, col_categoria, eixo_x_titulo, altura=None, rotacionar_x=False, legenda_titulo='Mês', agrupado=False):
-        texto_vertical = _rotacionar_texto_valores_volumetria(df_plot, col_categoria, 'Volume', agrupado=agrupado)
-        font_size_valor = 22 if modo_mobile else 26
+        estilo_texto = _calcular_estilo_texto_volumetria(df_plot, col_categoria, 'Volume', agrupado=agrupado)
 
         fig.update_layout(
             height=altura or (650 if modo_mobile else 560),
@@ -621,8 +629,8 @@ if aba == "📦 Volumetria de Pedidos":
 
         fig.update_traces(
             textposition='outside',
-            textangle=-90 if texto_vertical else 0,
-            textfont_size=font_size_valor,
+            textangle=estilo_texto['textangle'],
+            textfont_size=estilo_texto['font_size'],
             cliponaxis=False,
             texttemplate='%{text}',
         )
