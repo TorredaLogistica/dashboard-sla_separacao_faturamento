@@ -639,7 +639,7 @@ if aba == "📦 Volumetria de Pedidos":
         barras_estimadas = max(qtd_categorias * multiplicador_barras, 1)
         px_por_barra = largura_util / barras_estimadas
 
-        font_size_base = 18 if modo_mobile else 21  # 20% menor que o ajuste anterior
+        font_size_base = 18 if modo_mobile else 21
         font_size_reduzida = max(14 if modo_mobile else 17, int(round(font_size_base * 0.80)))
 
         def largura_texto_estimada(font_size):
@@ -767,13 +767,13 @@ if aba == "📦 Volumetria de Pedidos":
             y=y_proj,
             xref='paper',
             yref='y',
-            text=f"Projeção: {_formatar_inteiro_local(y_proj)}",
+            text=f"Projetado: {_formatar_inteiro_local(y_proj)}",
             showarrow=False,
-            yshift=14 if not modo_mobile else 10,
-            font=dict(size=_calcular_estilo_texto_volumetria(df_plot, coluna_periodo, 'Volume', agrupado=False)['font_size'], color='#2c3e50'),
-            bgcolor='rgba(255,255,255,0.85)',
-            bordercolor='rgba(68,68,68,0.25)',
-            borderwidth=1,
+            xanchor='center',
+            yanchor='bottom',
+            align='center',
+            yshift=10 if not modo_mobile else 8,
+            font=dict(size=_calcular_estilo_texto_volumetria(df_plot, coluna_periodo, 'Volume', agrupado=False)['font_size'], color='#2c3e50')
         )
         fig.update_yaxes(range=[0, y_max_atual * 1.18])
         return fig
