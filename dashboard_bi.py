@@ -512,22 +512,40 @@ with st.sidebar:
     tipo_volumetria = "Calendário (Data NF)"
     meses_selecionados = []
 
+    if '_ultimo_tipo_volumetria' not in st.session_state:
+        st.session_state['_ultimo_tipo_volumetria'] = None
+    if 'meses_volumetria_calendario' not in st.session_state:
+        st.session_state['meses_volumetria_calendario'] = []
+    if 'meses_volumetria_corte' not in st.session_state:
+        st.session_state['meses_volumetria_corte'] = []
+
+    filtros = ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']
     if aba == "📦 Volumetria de Pedidos":
-        tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False)
+        tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False, key='tipo_periodo_volumetria')
+        mudou_tipo_volumetria = st.session_state.get('_ultimo_tipo_volumetria') != tipo_volumetria
+
+        base_corte_sidebar = (
+            df.loc[df['Mes_Corte_Fatura'].notna(), ['Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem']]
+              .drop_duplicates()
+              .sort_values('Mes_Corte_Fatura_Ordem', ascending=False)
+        ) if {'Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem'}.issubset(df.columns) else pd.DataFrame(columns=['Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem'])
+        lista_meses_corte = base_corte_sidebar['Mes_Corte_Fatura'].tolist() if not base_corte_sidebar.empty else []
 
         if tipo_volumetria == "Calendário (Data NF)":
-            meses_selecionados = st.multiselect("Mês de Referência", lista_meses, default=[lista_meses[0]] if lista_meses else [])
-        else:
-            base_corte_sidebar = (
-                df.loc[df['Mes_Corte_Fatura'].notna(), ['Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem']]
-                  .drop_duplicates()
-                  .sort_values('Mes_Corte_Fatura_Ordem', ascending=False)
+            if mudou_tipo_volumetria or not st.session_state['meses_volumetria_calendario']:
+                st.session_state['meses_volumetria_calendario'] = [lista_meses[0]] if lista_meses else []
+            meses_selecionados = st.multiselect(
+                "Mês de Referência",
+                lista_meses,
+                key='meses_volumetria_calendario'
             )
-            lista_meses_corte = base_corte_sidebar['Mes_Corte_Fatura'].tolist()
+        else:
+            if mudou_tipo_volumetria or not st.session_state['meses_volumetria_corte']:
+                st.session_state['meses_volumetria_corte'] = [lista_meses_corte[0]] if lista_meses_corte else []
             meses_selecionados = st.multiselect(
                 "Mês de Corte da Fatura",
                 lista_meses_corte,
-                default=[lista_meses_corte[0]] if lista_meses_corte else []
+                key='meses_volumetria_corte'
             )
             if not lista_meses_corte:
                 st.caption("⚠️ Não foi possível detectar automaticamente a aba de cortes neste arquivo.")
@@ -545,18 +563,27 @@ with st.sidebar:
                     st.caption(f"Detalhe: {erro_corte}")
                 st.caption("Se o arquivo em produção tiver somente a Planilha1, publique um arquivo auxiliar com as datas de corte, por exemplo: datas_corte_fatura.xlsx")
 
+        if mudou_tipo_volumetria:
+            for col in filtros:
+                chave_filtro = f'filtro_sidebar_{col}'
+                if chave_filtro in st.session_state:
+                    st.session_state[chave_filtro] = []
+
+        st.session_state['_ultimo_tipo_volumetria'] = tipo_volumetria
         mes_selecionado = meses_selecionados[0] if meses_selecionados else None
     else:
         mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
         meses_selecionados = [mes_selecionado] if mes_selecionado else []
 
-    filtros = ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']
     mask = np.ones(len(df), dtype=bool)
     filtros_selecionados = {}
 
     for col in filtros:
         if col in df.columns:
-            vals = st.multiselect(col, sorted(df[col].dropna().unique()))
+            chave_filtro = f'filtro_sidebar_{col}'
+            if chave_filtro not in st.session_state:
+                st.session_state[chave_filtro] = []
+            vals = st.multiselect(col, sorted(df[col].dropna().unique()), key=chave_filtro)
             filtros_selecionados[col] = vals
             if vals:
                 mask &= df[col].isin(vals)
