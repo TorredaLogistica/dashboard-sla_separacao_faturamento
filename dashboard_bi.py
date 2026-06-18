@@ -221,6 +221,13 @@ def normalizar_pedido(serie: pd.Series) -> pd.Series:
 # 🔥 BOTÃO DE ATUALIZAÇÃO (COLOCA AQUI)
 if st.button("🔄 Atualizar dados"):
     st.cache_data.clear()
+    for chave in [
+        '_cache_sidebar_base', '_ultimo_tipo_volumetria',
+        'meses_volumetria_calendario', 'meses_volumetria_corte'
+    ]:
+        st.session_state.pop(chave, None)
+    for col in ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']:
+        st.session_state.pop(f'filtro_sidebar_{col}', None)
     st.rerun()
 
 # =============================
@@ -497,6 +504,31 @@ except Exception as e:
     st.stop()
 
 
+def _montar_cache_sidebar(df_base, filtros_cols):
+    """Pré-calcula opções da sidebar para evitar recomputações custosas a cada rerun."""
+    lista_meses = sorted(df_base['Mes_Ano'].dropna().unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
+
+    opcoes_filtros = {}
+    for col in filtros_cols:
+        if col in df_base.columns:
+            opcoes_filtros[col] = sorted(df_base[col].dropna().unique())
+
+    if {'Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem'}.issubset(df_base.columns):
+        base_corte_sidebar = (
+            df_base.loc[df_base['Mes_Corte_Fatura'].notna(), ['Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem']]
+                   .drop_duplicates()
+                   .sort_values('Mes_Corte_Fatura_Ordem', ascending=False)
+        )
+        lista_meses_corte = base_corte_sidebar['Mes_Corte_Fatura'].tolist()
+    else:
+        lista_meses_corte = []
+
+    return {
+        'lista_meses': lista_meses,
+        'lista_meses_corte': lista_meses_corte,
+        'opcoes_filtros': opcoes_filtros,
+    }
+
 # =============================
 # SIDEBAR
 # =============================
@@ -510,8 +542,13 @@ with st.sidebar:
         st.session_state['modo_mobile'] = auto_mobile
     modo_mobile = st.checkbox('📱 Modo celular (auto)', key='modo_mobile', help='Ativado automaticamente quando detectado acesso por celular. Desmarque para forçar modo desktop.')
 
+    filtros = ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']
+    if '_cache_sidebar_base' not in st.session_state:
+        st.session_state['_cache_sidebar_base'] = _montar_cache_sidebar(df, filtros)
+    cache_sidebar = st.session_state['_cache_sidebar_base']
+
     aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos"], horizontal=True)
-    lista_meses = sorted(df['Mes_Ano'].dropna().unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
+    lista_meses = cache_sidebar['lista_meses']
 
     tipo_volumetria = "Calendário (Data NF)"
     meses_selecionados = []
@@ -523,17 +560,10 @@ with st.sidebar:
     if 'meses_volumetria_corte' not in st.session_state:
         st.session_state['meses_volumetria_corte'] = []
 
-    filtros = ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']
     if aba == "📦 Volumetria de Pedidos":
         tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False, key='tipo_periodo_volumetria')
         mudou_tipo_volumetria = st.session_state.get('_ultimo_tipo_volumetria') != tipo_volumetria
-
-        base_corte_sidebar = (
-            df.loc[df['Mes_Corte_Fatura'].notna(), ['Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem']]
-              .drop_duplicates()
-              .sort_values('Mes_Corte_Fatura_Ordem', ascending=False)
-        ) if {'Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem'}.issubset(df.columns) else pd.DataFrame(columns=['Mes_Corte_Fatura', 'Mes_Corte_Fatura_Ordem'])
-        lista_meses_corte = base_corte_sidebar['Mes_Corte_Fatura'].tolist() if not base_corte_sidebar.empty else []
+        lista_meses_corte = cache_sidebar['lista_meses_corte']
 
         if tipo_volumetria == "Calendário (Data NF)":
             if mudou_tipo_volumetria or not st.session_state['meses_volumetria_calendario']:
@@ -581,17 +611,17 @@ with st.sidebar:
 
     mask = np.ones(len(df), dtype=bool)
     filtros_selecionados = {}
+    opcoes_filtros = cache_sidebar['opcoes_filtros']
 
     for col in filtros:
         if col in df.columns:
             chave_filtro = f'filtro_sidebar_{col}'
             if chave_filtro not in st.session_state:
                 st.session_state[chave_filtro] = []
-            vals = st.multiselect(col, sorted(df[col].dropna().unique()), key=chave_filtro)
+            vals = st.multiselect(col, opcoes_filtros.get(col, []), key=chave_filtro)
             filtros_selecionados[col] = vals
             if vals:
                 mask &= df[col].isin(vals)
-
 dff_global = df[mask].copy()
 empresas_filtradas = filtros_selecionados.get('Empresa', [])
 
@@ -613,8 +643,8 @@ if aba == "📦 Volumetria de Pedidos":
 
     def _contar_volume(df_local, group_cols):
         if 'Pedido' in df_local.columns:
-            return df_local.groupby(group_cols)['Pedido'].count().reset_index(name='Volume')
-        return df_local.groupby(group_cols).size().reset_index(name='Volume')
+            return df_local.groupby(group_cols, sort=False, observed=True)['Pedido'].count().reset_index(name='Volume')
+        return df_local.groupby(group_cols, sort=False, observed=True).size().reset_index(name='Volume')
 
     def _formatar_inteiro_local(valor):
         try:
@@ -653,8 +683,9 @@ if aba == "📦 Volumetria de Pedidos":
 
         return {'font_size': font_size_reduzida, 'textangle': -90}
 
-    def _formatar_figura_volumetria(fig, df_plot, col_categoria, eixo_x_titulo, altura=None, rotacionar_x=False, legenda_titulo='Mês', agrupado=False):
-        estilo_texto = _calcular_estilo_texto_volumetria(df_plot, col_categoria, 'Volume', agrupado=agrupado)
+    def _formatar_figura_volumetria(fig, df_plot, col_categoria, eixo_x_titulo, altura=None, rotacionar_x=False, legenda_titulo='Mês', agrupado=False, estilo_texto=None):
+        if estilo_texto is None:
+            estilo_texto = _calcular_estilo_texto_volumetria(df_plot, col_categoria, 'Volume', agrupado=agrupado)
 
         fig.update_layout(
             height=altura or (650 if modo_mobile else 560),
@@ -685,7 +716,7 @@ if aba == "📦 Volumetria de Pedidos":
         if df_local is None or df_local.empty or not periodo_ref:
             return None
 
-        base_periodo = df_local[df_local[coluna_periodo] == periodo_ref].copy()
+        base_periodo = df_local.loc[df_local[coluna_periodo] == periodo_ref]
         if base_periodo.empty or 'Data NF' not in base_periodo.columns:
             return None
 
@@ -707,7 +738,7 @@ if aba == "📦 Volumetria de Pedidos":
             if pd.isna(data_inicio) or pd.isna(data_fim):
                 return None
 
-        ultima_data_util = min(ultima_data.normalize(), pd.Timestamp(data_fim).normalize())
+        ultima_data_util = min(pd.Timestamp(ultima_data).normalize(), pd.Timestamp(data_fim).normalize())
         data_inicio = pd.Timestamp(data_inicio).normalize()
         data_fim = pd.Timestamp(data_fim).normalize()
 
@@ -721,20 +752,17 @@ if aba == "📦 Volumetria de Pedidos":
         if volume_projetado <= volume_atual:
             return None
 
-        return {
-            'periodo': periodo_ref,
-            'volume_atual': volume_atual,
-            'volume_projetado': volume_projetado,
-            'dias_decorridos': dias_decorridos,
-            'dias_totais': dias_totais,
-            'ultima_data': ultima_data_util,
-        }
+        return {'volume_projetado': volume_projetado}
 
-    def _adicionar_linha_projecao(fig, df_local, df_plot, coluna_periodo, ordem_periodos):
+    def _adicionar_linha_projecao(fig, df_local, df_plot, coluna_periodo, ordem_periodos, estilo_texto=None):
         if df_plot is None or df_plot.empty or coluna_periodo not in df_plot.columns:
             return fig
 
-        periodos_plot = [p for p in (ordem_periodos or df_plot[coluna_periodo].dropna().tolist()) if p in set(df_plot[coluna_periodo].dropna().tolist())]
+        periodos_disponiveis = df_plot[coluna_periodo].dropna().tolist()
+        if not periodos_disponiveis:
+            return fig
+        periodos_set = set(periodos_disponiveis)
+        periodos_plot = [p for p in (ordem_periodos or periodos_disponiveis) if p in periodos_set]
         if not periodos_plot:
             return fig
 
@@ -742,6 +770,9 @@ if aba == "📦 Volumetria de Pedidos":
         proj = _obter_projecao_periodo(df_local, coluna_periodo, ultimo_periodo)
         if not proj:
             return fig
+
+        if estilo_texto is None:
+            estilo_texto = _calcular_estilo_texto_volumetria(df_plot, coluna_periodo, 'Volume', agrupado=False)
 
         qtd_periodos = max(len(periodos_plot), 1)
         indice_ultimo = qtd_periodos - 1
@@ -773,11 +804,10 @@ if aba == "📦 Volumetria de Pedidos":
             yanchor='bottom',
             align='center',
             yshift=10 if not modo_mobile else 8,
-            font=dict(size=_calcular_estilo_texto_volumetria(df_plot, coluna_periodo, 'Volume', agrupado=False)['font_size'], color='#2c3e50')
+            font=dict(size=estilo_texto['font_size'], color='#2c3e50')
         )
         fig.update_yaxes(range=[0, y_max_atual * 1.18])
         return fig
-
     coluna_periodo = 'Mes_Ano'
     legenda_periodo = 'Mês'
     titulo_geral = 'Volumetria de Pedidos Geral'
@@ -809,8 +839,21 @@ if aba == "📦 Volumetria de Pedidos":
 
     category_orders = {coluna_periodo: ordem_periodos} if ordem_periodos else None
     col_canal = _coluna_canal(base_vol)
+    colunas_base_vol = [coluna_periodo, 'Data NF', col_canal]
+    if 'Pedido' in base_vol.columns:
+        colunas_base_vol.append('Pedido')
+    if coluna_periodo == 'Mes_Corte_Fatura':
+        if 'Mes_Corte_Fatura_Ordem' in base_vol.columns:
+            colunas_base_vol.append('Mes_Corte_Fatura_Ordem')
+        if 'Data_Inicio_Corte_Mapa' in base_vol.columns:
+            colunas_base_vol.append('Data_Inicio_Corte_Mapa')
+        if 'Data_Fim_Corte_Mapa' in base_vol.columns:
+            colunas_base_vol.append('Data_Fim_Corte_Mapa')
+    colunas_base_vol = [c for c in dict.fromkeys(colunas_base_vol) if c in base_vol.columns]
+    base_vol = base_vol[colunas_base_vol].copy()
 
     vol_geral = _contar_volume(base_vol, [coluna_periodo])
+    estilo_geral = _calcular_estilo_texto_volumetria(vol_geral, coluna_periodo, 'Volume', agrupado=False)
     fig_geral = px.bar(vol_geral, x=coluna_periodo, y='Volume', color=coluna_periodo, text='Volume', title=titulo_geral, category_orders=category_orders)
     fig_geral = _formatar_figura_volumetria(
         fig_geral,
@@ -818,12 +861,14 @@ if aba == "📦 Volumetria de Pedidos":
         coluna_periodo,
         eixo_x_titulo=('Mês de Referência' if coluna_periodo == 'Mes_Ano' else 'Mês de Corte da Fatura'),
         altura=(500 if not modo_mobile else 620),
-        legenda_titulo=legenda_periodo
+        legenda_titulo=legenda_periodo,
+        estilo_texto=estilo_geral
     )
-    fig_geral = _adicionar_linha_projecao(fig_geral, base_vol, vol_geral, coluna_periodo, ordem_periodos)
+    fig_geral = _adicionar_linha_projecao(fig_geral, base_vol, vol_geral, coluna_periodo, ordem_periodos, estilo_texto=estilo_geral)
     st.plotly_chart(fig_geral, use_container_width=True)
 
     vol_canal = _contar_volume(base_vol, [col_canal, coluna_periodo])
+    estilo_canal = _calcular_estilo_texto_volumetria(vol_canal, col_canal, 'Volume', agrupado=True)
     fig_canal = px.bar(vol_canal, x=col_canal, y='Volume', color=coluna_periodo, barmode='group', text='Volume', title=titulo_canal, category_orders=category_orders)
     fig_canal = _formatar_figura_volumetria(
         fig_canal,
@@ -833,7 +878,8 @@ if aba == "📦 Volumetria de Pedidos":
         altura=(650 if not modo_mobile else 720),
         rotacionar_x=True,
         legenda_titulo=legenda_periodo,
-        agrupado=True
+        agrupado=True,
+        estilo_texto=estilo_canal
     )
     st.plotly_chart(fig_canal, use_container_width=True)
     st.stop()
