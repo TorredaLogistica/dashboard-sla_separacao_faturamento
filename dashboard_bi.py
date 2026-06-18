@@ -94,48 +94,6 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
-# LOGIN (Mantido conforme original)
-# =============================
-def check_password():
-    """Login simples e robusto.
-
-    Evita KeyError em cenários comuns no celular (reconexão do WebSocket,
-    aba "dormindo", troca de rede), onde o session_state pode reiniciar
-    sem a chave 'password'.
-    """
-
-    # Inicializa as chaves para evitar KeyError
-    if "password" not in st.session_state:
-        st.session_state["password"] = ""
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
-
-    def password_entered():
-        if st.session_state.get("password", "") == "claro2026":
-            st.session_state["password_correct"] = True
-            # Não deletar a chave (evita KeyError após reconexões no mobile)
-            st.session_state["password"] = ""
-        else:
-            st.session_state["password_correct"] = False
-
-    if not st.session_state.get("password_correct", False):
-        st.title("🔒 Acesso Restrito")
-        st.text_input(
-            "Digite a senha",
-            type="password",
-            on_change=password_entered,
-            key="password",
-        )
-
-        # Mostra erro somente depois que o usuário tentar
-        if st.session_state.get("password", "") != "" and not st.session_state.get("password_correct", False):
-            st.error("Senha incorreta")
-
-        st.stop()
-
-check_password()
-
-# =============================
 # CABEÇALHO (COM AJUSTE DE FUSO HORÁRIO)
 # =============================
 from datetime import timedelta
