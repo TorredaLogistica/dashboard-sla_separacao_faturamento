@@ -466,7 +466,8 @@ except Exception as e:
 
 
 # =============================
-# DASHBOARD DE ACESSOS - SEPARAÇÃO E FATURAMENTO
+# IDENTIFICAÇÃO DO USUÁRIO + DASHBOARD DE ACESSOS
+# INDICADOR: SEPARAÇÃO E FATURAMENTO
 # =============================
 LOG_ACESSOS_SF_CSV = "log_separacao_faturamento_acessos.csv"
 LOG_ACESSOS_SF_XLSX = "log_separacao_faturamento_acessos.xlsx"
@@ -485,8 +486,16 @@ def _limpar_nome_visualizacao(aba_atual: str) -> str:
         "📊 Evolução Mensal": "Evolução Mensal",
         "📦 Volumetria de Pedidos": "Volumetria de Pedidos",
         "📊 Dashboard de Acessos": "Dashboard de Acessos",
+        "Entrada no Indicador": "Entrada no Indicador",
     }
     return mapa.get(str(aba_atual), str(aba_atual))
+
+
+def obter_usuario_logado_sf() -> str:
+    """Retorna o usuário identificado na entrada do indicador."""
+    usuario = st.session_state.get("usuario_logado_sf", "")
+    usuario = str(usuario).strip()
+    return usuario if usuario else "Usuário"
 
 
 def _gerar_id_log_sf(usuario: str, data, indicador: str, visualizacao: str, detalhe: str) -> str:
@@ -527,6 +536,7 @@ def _normalizar_log_sf(df_log: pd.DataFrame) -> pd.DataFrame:
             axis=1
         )
 
+    # Remove duplicidades exatas e por conteúdo principal.
     df_log = df_log.drop_duplicates(subset=["ID"], keep="first")
     df_log = df_log.drop_duplicates(subset=COLUNAS_EXIBICAO_LOG_SF, keep="first")
     df_log = df_log.sort_values("Data", ascending=True).reset_index(drop=True)
@@ -534,13 +544,13 @@ def _normalizar_log_sf(df_log: pd.DataFrame) -> pd.DataFrame:
 
 
 def carregar_log_sf() -> pd.DataFrame:
+    # Fonte principal local: CSV. O Excel entra como backup/migração inicial.
     if os.path.exists(LOG_ACESSOS_SF_CSV):
         try:
             return _normalizar_log_sf(pd.read_csv(LOG_ACESSOS_SF_CSV, sep=";", encoding="utf-8-sig"))
         except Exception:
             pass
 
-    # Migração inicial se existir somente Excel antigo.
     if os.path.exists(LOG_ACESSOS_SF_XLSX):
         try:
             return _normalizar_log_sf(pd.read_excel(LOG_ACESSOS_SF_XLSX, engine="openpyxl"))
@@ -563,11 +573,11 @@ def salvar_log_sf(df_log: pd.DataFrame):
         pass
 
 
-def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização", usuario: str = "Usuário"):
+def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização", usuario: str | None = None):
     """Registra acesso sem duplicar em reruns do Streamlit."""
     try:
         visualizacao = _limpar_nome_visualizacao(visualizacao)
-        usuario = (usuario or "Usuário").strip() or "Usuário"
+        usuario = (usuario or obter_usuario_logado_sf()).strip() or "Usuário"
         detalhe = (detalhe or "").strip()
         indicador = "Separação e Faturamento"
         data_hora_sp = datetime.now(ZoneInfo(FUSO_HORARIO_LOG)).replace(tzinfo=None).replace(microsecond=0)
@@ -603,9 +613,10 @@ def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização
 def registrar_visualizacao_sf(aba_atual: str):
     """Registra somente quando a visualização muda na sessão."""
     visualizacao = _limpar_nome_visualizacao(aba_atual)
-    chave = f"view|{visualizacao}"
+    usuario = obter_usuario_logado_sf()
+    chave = f"view|{usuario}|{visualizacao}"
     if st.session_state.get("_ultima_visualizacao_sf_logada") != chave:
-        registrar_log_sf(visualizacao, "Acesso à visualização")
+        registrar_log_sf(visualizacao, "Acesso à visualização", usuario=usuario)
         st.session_state["_ultima_visualizacao_sf_logada"] = chave
 
 
@@ -620,6 +631,25 @@ def apagar_logs_sf() -> bool:
         return False
 
 
+def render_identificacao_usuario_sf():
+    """Solicita o nome do usuário antes de liberar o indicador."""
+    st.markdown("## 🔐 Identificação de acesso")
+    st.info("Para acessar o indicador de Separação e Faturamento, informe seu nome de usuário.")
+
+    nome_digitado = st.text_input("Nome do usuário", key="input_usuario_logado_sf")
+
+    if st.button("Acessar indicador", use_container_width=True):
+        nome_digitado = (nome_digitado or "").strip()
+        if not nome_digitado:
+            st.error("Informe o nome do usuário para continuar.")
+            return
+
+        st.session_state.usuario_logado_sf = nome_digitado
+        st.session_state.acesso_sf_liberado = True
+        registrar_log_sf("Entrada no Indicador", "Acesso liberado ao indicador", usuario=nome_digitado)
+        st.rerun()
+
+
 def render_senha_dashboard_acessos_sf():
     st.markdown("## 🔐 Acesso restrito")
     st.info("Informe a senha para acessar o Dashboard de Acessos.")
@@ -628,7 +658,7 @@ def render_senha_dashboard_acessos_sf():
     if st.button("Entrar", use_container_width=True):
         if senha_digitada == SENHA_DASHBOARD_ACESSOS:
             st.session_state.dashboard_acessos_sf_autenticado = True
-            registrar_log_sf("Dashboard de Acessos", "Acesso autorizado")
+            registrar_log_sf("Dashboard de Acessos", "Acesso autorizado", usuario=obter_usuario_logado_sf())
             st.rerun()
         else:
             st.error("Senha incorreta. Tente novamente.")
@@ -649,15 +679,23 @@ def render_dashboard_acessos_sf():
         data_max = df_log["Data"].max().strftime("%d/%m/%Y %H:%M:%S")
 
         total_acessos = len(df_log)
+        usuarios_unicos = df_log["Usuario"].nunique()
         visualizacoes_unicas = df_log["Visualizacao"].nunique()
         dias_com_acesso = df_log["Data"].dt.date.nunique()
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total de acessos", f"{total_acessos:,}".replace(",", "."))
-        c2.metric("Visualizações acessadas", f"{visualizacoes_unicas:,}".replace(",", "."))
-        c3.metric("Dias com acesso", f"{dias_com_acesso:,}".replace(",", "."))
+        c2.metric("Usuários únicos", f"{usuarios_unicos:,}".replace(",", "."))
+        c3.metric("Visualizações", f"{visualizacoes_unicas:,}".replace(",", "."))
+        c4.metric("Dias com acesso", f"{dias_com_acesso:,}".replace(",", "."))
 
         st.info(f"Histórico carregado de {data_min} até {data_max}.")
+
+        st.markdown("### 👤 Acessos por usuário")
+        ranking_usuario = df_log["Usuario"].fillna("Usuário").value_counts().reset_index()
+        ranking_usuario.columns = ["Usuário", "Qtd Acessos"]
+        st.dataframe(ranking_usuario, use_container_width=True, hide_index=True)
+        st.bar_chart(ranking_usuario.set_index("Usuário"))
 
         st.markdown("### 📌 Acessos por visualização")
         ranking_visualizacao = df_log["Visualizacao"].fillna("Não informado").value_counts().reset_index()
@@ -740,6 +778,17 @@ def _montar_cache_sidebar(df_base, filtros_cols):
 
 if 'dashboard_acessos_sf_autenticado' not in st.session_state:
     st.session_state.dashboard_acessos_sf_autenticado = False
+if 'usuario_logado_sf' not in st.session_state:
+    st.session_state.usuario_logado_sf = ''
+if 'acesso_sf_liberado' not in st.session_state:
+    st.session_state.acesso_sf_liberado = False
+
+# Antes de exibir qualquer visualização do indicador, identifica o usuário.
+if not st.session_state.acesso_sf_liberado or not str(st.session_state.usuario_logado_sf).strip():
+    render_identificacao_usuario_sf()
+    st.stop()
+
+st.caption(f"Usuário logado: {obter_usuario_logado_sf()}")
 
 # =============================
 # SIDEBAR
@@ -768,7 +817,7 @@ with st.sidebar:
     mask = np.ones(len(df), dtype=bool)
     filtros_selecionados = {}
 
-    # Quando selecionar Dashboard de Acessos, a sidebar mantém somente a opção Visualização,
+    # Quando selecionar Dashboard de Acessos, a sidebar mantém somente Visualização,
     # permitindo que o usuário volte para as outras visões sem exibir os demais filtros.
     if aba != "📊 Dashboard de Acessos":
         if '_ultimo_tipo_volumetria' not in st.session_state:
@@ -840,13 +889,12 @@ with st.sidebar:
 dff_global = df[mask].copy()
 empresas_filtradas = filtros_selecionados.get('Empresa', [])
 
-# Loga as visualizações normais apenas quando houver troca de visualização na sessão.
+# Loga visualizações normais apenas quando houver troca de visualização na sessão.
 if aba != "📊 Dashboard de Acessos":
     st.session_state.dashboard_acessos_sf_autenticado = False
     registrar_visualizacao_sf(aba)
 
-# Nova visualização protegida por senha.
-# Ao selecioná-la, a sidebar mostra somente o filtro Visualização para facilitar o retorno.
+# Visualização protegida por senha. Na sidebar, aparece somente a opção Visualização.
 if aba == "📊 Dashboard de Acessos":
     if not st.session_state.dashboard_acessos_sf_autenticado:
         render_senha_dashboard_acessos_sf()
