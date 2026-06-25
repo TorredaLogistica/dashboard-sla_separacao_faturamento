@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
+from pathlib import Path
 import os
 import io
 import base64
@@ -471,9 +472,8 @@ except Exception as e:
 # INDICADOR: SEPARAÇÃO E FATURAMENTO
 # =============================
 # Persistência do histórico:
-# - Se as secrets do GitHub estiverem configuradas, o GitHub será a fonte principal.
-# - Se não estiverem configuradas, o app mantém backup local em CSV/Excel.
-# - Para não perder histórico em reinício/redeploy do Streamlit Cloud, configure o GitHub.
+# - Com GitHub configurado em secrets, o GitHub vira a fonte principal do histórico.
+# - Sem GitHub, o app mantém CSV/Excel local como backup.
 
 LOG_ACESSOS_SF_CSV = "log_separacao_faturamento_acessos.csv"
 LOG_ACESSOS_SF_XLSX = "log_separacao_faturamento_acessos.xlsx"
@@ -486,7 +486,6 @@ COLUNAS_EXIBICAO_LOG_SF = ["Usuario", "Data", "Indicador", "Visualizacao", "Deta
 
 
 def _get_config_sf(nome: str, padrao: str = "") -> str:
-    """Busca configuração primeiro em st.secrets e depois em variável de ambiente."""
     try:
         valor = st.secrets.get(nome, "")
         if valor:
@@ -497,7 +496,6 @@ def _get_config_sf(nome: str, padrao: str = "") -> str:
 
 
 def github_sf_configurado() -> bool:
-    """Verifica se o log permanente no GitHub está configurado para este indicador."""
     return bool(_get_config_sf("GITHUB_TOKEN") and _get_config_sf("GITHUB_REPO"))
 
 
@@ -522,8 +520,7 @@ def _limpar_nome_visualizacao(aba_atual: str) -> str:
 
 
 def obter_usuario_logado_sf() -> str:
-    usuario = st.session_state.get("usuario_logado_sf", "")
-    usuario = str(usuario).strip()
+    usuario = str(st.session_state.get("usuario_logado_sf", "")).strip()
     return usuario if usuario else "Usuário"
 
 
@@ -625,7 +622,6 @@ def _github_salvar_log_sf(df_log: pd.DataFrame, mensagem: str = "Atualiza log Se
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
-
         _, sha_atual = _github_ler_log_sf()
         payload = {
             "message": mensagem,
@@ -636,7 +632,6 @@ def _github_salvar_log_sf(df_log: pd.DataFrame, mensagem: str = "Atualiza log Se
             payload["sha"] = sha_atual
 
         resp = requests.put(url, headers=headers, json=payload, timeout=20)
-
         if resp.status_code == 409:
             df_remoto, sha_novo = _github_ler_log_sf()
             df_final = _normalizar_log_sf(pd.concat([df_remoto, df_log], ignore_index=True))
@@ -644,7 +639,6 @@ def _github_salvar_log_sf(df_log: pd.DataFrame, mensagem: str = "Atualiza log Se
             if sha_novo:
                 payload["sha"] = sha_novo
             resp = requests.put(url, headers=headers, json=payload, timeout=20)
-
         resp.raise_for_status()
         return True
     except Exception:
@@ -657,13 +651,11 @@ def _ler_log_sf_local() -> pd.DataFrame:
             return _normalizar_log_sf(pd.read_csv(LOG_ACESSOS_SF_CSV, sep=";", encoding="utf-8-sig"))
         except Exception:
             pass
-
     if os.path.exists(LOG_ACESSOS_SF_XLSX):
         try:
             return _normalizar_log_sf(pd.read_excel(LOG_ACESSOS_SF_XLSX, engine="openpyxl"))
         except Exception:
             pass
-
     return pd.DataFrame(columns=COLUNAS_LOG_SF)
 
 
@@ -677,22 +669,17 @@ def salvar_log_sf_local(df_log: pd.DataFrame):
 
 
 def carregar_log_sf() -> pd.DataFrame:
-    """Carrega histórico usando GitHub como fonte principal quando configurado."""
     if github_sf_configurado():
         df_github, _sha = _github_ler_log_sf()
         if not df_github.empty:
             salvar_log_sf_local(df_github)
             return df_github
-
-        # Migração inicial do histórico local para o GitHub.
         df_local = _ler_log_sf_local()
         if not df_local.empty:
-            _github_salvar_log_sf(df_local, "Migra histórico inicial do indicador Separação e Faturamento")
+            _github_salvar_log_sf(df_local, "Migra histórico inicial Separação e Faturamento")
             salvar_log_sf_local(df_local)
             return df_local
-
         return pd.DataFrame(columns=COLUNAS_LOG_SF)
-
     return _ler_log_sf_local()
 
 
@@ -729,12 +716,10 @@ def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização
             "Visualizacao": visualizacao,
             "Detalhe": detalhe,
         }])
-
         base = carregar_log_sf()
         base = pd.concat([base, novo], ignore_index=True)
         salvar_log_sf(base, "Registra acesso no indicador Separação e Faturamento")
         st.session_state["_ultimo_log_sf_evento"] = {"chave": chave_evento, "data": data_hora_sp}
-
     except Exception as e:
         st.toast(f"Não foi possível registrar o acesso: {e}", icon="⚠️")
 
@@ -763,13 +748,11 @@ def render_identificacao_usuario_sf():
     st.markdown("## 🔐 Identificação de acesso")
     st.info("Para acessar o indicador de Separação e Faturamento, informe seu nome de usuário.")
     nome_digitado = st.text_input("Nome do usuário", key="input_usuario_logado_sf")
-
     if st.button("Acessar indicador", use_container_width=True):
         nome_digitado = (nome_digitado or "").strip()
         if not nome_digitado:
             st.error("Informe o nome do usuário para continuar.")
             return
-
         st.session_state.usuario_logado_sf = nome_digitado
         st.session_state.acesso_sf_liberado = True
         registrar_log_sf("Entrada no Indicador", "Acesso liberado ao indicador", usuario=nome_digitado)
@@ -792,7 +775,6 @@ def render_senha_dashboard_acessos_sf():
 def render_dashboard_acessos_sf():
     st.subheader("📊 Dashboard de Acessos")
     st.caption("Histórico de acessos das visualizações do indicador Separação e Faturamento.")
-
     fonte_log = "GitHub" if github_sf_configurado() else "arquivo local do app"
     st.caption(f"Fonte do histórico: {fonte_log}")
 
@@ -800,7 +782,6 @@ def render_dashboard_acessos_sf():
     if df_log.empty:
         st.warning("Ainda não há registros de acessos para este indicador.")
         return
-
     df_log = df_log.dropna(subset=["Data"]).copy()
     if df_log.empty:
         st.warning("O arquivo de log existe, mas ainda não possui datas válidas.")
@@ -809,27 +790,10 @@ def render_dashboard_acessos_sf():
     data_min = df_log["Data"].min().date()
     data_max = df_log["Data"].max().date()
 
-    # =============================
-    # FILTROS - PADRÃO IGUAL AO DASHBOARD DO CHATBOT
-    # =============================
     st.markdown("### 🔎 Filtros")
     col_dt_ini, col_dt_fim = st.columns(2)
-    data_inicio = col_dt_ini.date_input(
-        "Data início",
-        value=data_min,
-        min_value=data_min,
-        max_value=data_max,
-        format="DD/MM/YYYY",
-        key="sf_log_data_inicio"
-    )
-    data_fim = col_dt_fim.date_input(
-        "Data fim",
-        value=data_max,
-        min_value=data_min,
-        max_value=data_max,
-        format="DD/MM/YYYY",
-        key="sf_log_data_fim"
-    )
+    data_inicio = col_dt_ini.date_input("Data início", value=data_min, min_value=data_min, max_value=data_max, format="DD/MM/YYYY", key="sf_log_data_inicio")
+    data_fim = col_dt_fim.date_input("Data fim", value=data_max, min_value=data_min, max_value=data_max, format="DD/MM/YYYY", key="sf_log_data_fim")
 
     inicio = pd.to_datetime(data_inicio)
     fim = pd.to_datetime(data_fim) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
@@ -841,12 +805,10 @@ def render_dashboard_acessos_sf():
         total_acessos = len(df_filtrado)
         usuarios_unicos = df_filtrado["Usuario"].nunique()
         indicadores_acessados = df_filtrado["Indicador"].nunique()
-
         c1, c2, c3 = st.columns(3)
         c1.metric("Total de acessos", f"{total_acessos:,}".replace(",", "."))
         c2.metric("Usuários únicos", f"{usuarios_unicos:,}".replace(",", "."))
         c3.metric("Indicadores acessados", f"{indicadores_acessados:,}".replace(",", "."))
-
         st.caption(f"Histórico carregado de {data_inicio.strftime('%d/%m/%Y')} até {data_fim.strftime('%d/%m/%Y')}.")
 
         st.markdown("### 👤 Acessos por usuário")
@@ -874,23 +836,11 @@ def render_dashboard_acessos_sf():
         st.dataframe(ultimos, use_container_width=True, hide_index=True)
 
         csv_download = ultimos.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button(
-            label="⬇️ Baixar histórico filtrado em CSV",
-            data=csv_download,
-            file_name=LOG_ACESSOS_SF_CSV,
-            mime="text/csv",
-            use_container_width=True
-        )
+        st.download_button("⬇️ Baixar histórico filtrado em CSV", data=csv_download, file_name=LOG_ACESSOS_SF_CSV, mime="text/csv", use_container_width=True)
 
     if os.path.exists(LOG_ACESSOS_SF_XLSX):
         with open(LOG_ACESSOS_SF_XLSX, "rb") as f:
-            st.download_button(
-                label="⬇️ Baixar histórico completo em Excel",
-                data=f,
-                file_name=LOG_ACESSOS_SF_XLSX,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
+            st.download_button("⬇️ Baixar histórico completo em Excel", data=f, file_name=LOG_ACESSOS_SF_XLSX, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
     st.markdown("---")
     with st.expander("🛡️ Administração do log - apagar registros"):
@@ -898,7 +848,6 @@ def render_dashboard_acessos_sf():
         usuario_admin = st.text_input("Usuário administrador", key="usuario_admin_log_sf")
         senha_admin = st.text_input("Senha administrador", type="password", key="senha_admin_log_sf")
         confirmar = st.checkbox("Confirmo que desejo apagar todos os registros", key="confirmar_apagar_log_sf")
-
         if st.button("🗑️ Apagar todos os registros", use_container_width=True):
             if usuario_admin == ADMIN_LOG_USUARIO and senha_admin == ADMIN_LOG_SENHA and confirmar:
                 if apagar_logs_sf():
@@ -941,7 +890,6 @@ if 'usuario_logado_sf' not in st.session_state:
 if 'acesso_sf_liberado' not in st.session_state:
     st.session_state.acesso_sf_liberado = False
 
-# Antes de exibir qualquer visualização do indicador, identifica o usuário.
 if not st.session_state.acesso_sf_liberado or not str(st.session_state.usuario_logado_sf).strip():
     render_identificacao_usuario_sf()
     st.stop()
@@ -975,8 +923,6 @@ with st.sidebar:
     mask = np.ones(len(df), dtype=bool)
     filtros_selecionados = {}
 
-    # Quando selecionar Dashboard de Acessos, a sidebar mantém somente Visualização,
-    # permitindo que o usuário volte para as outras visões sem exibir os demais filtros.
     if aba != "📊 Dashboard de Acessos":
         if '_ultimo_tipo_volumetria' not in st.session_state:
             st.session_state['_ultimo_tipo_volumetria'] = None
@@ -989,45 +935,21 @@ with st.sidebar:
             tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False, key='tipo_periodo_volumetria')
             mudou_tipo_volumetria = st.session_state.get('_ultimo_tipo_volumetria') != tipo_volumetria
             lista_meses_corte = cache_sidebar['lista_meses_corte']
-
             if tipo_volumetria == "Calendário (Data NF)":
                 if mudou_tipo_volumetria or not st.session_state['meses_volumetria_calendario']:
                     st.session_state['meses_volumetria_calendario'] = [lista_meses[0]] if lista_meses else []
-                meses_selecionados = st.multiselect(
-                    "Mês de Referência",
-                    lista_meses,
-                    key='meses_volumetria_calendario'
-                )
+                meses_selecionados = st.multiselect("Mês de Referência", lista_meses, key='meses_volumetria_calendario')
             else:
                 if mudou_tipo_volumetria or not st.session_state['meses_volumetria_corte']:
                     st.session_state['meses_volumetria_corte'] = [lista_meses_corte[0]] if lista_meses_corte else []
-                meses_selecionados = st.multiselect(
-                    "Mês de Corte da Fatura",
-                    lista_meses_corte,
-                    key='meses_volumetria_corte'
-                )
+                meses_selecionados = st.multiselect("Mês de Corte da Fatura", lista_meses_corte, key='meses_volumetria_corte')
                 if not lista_meses_corte:
                     st.caption("⚠️ Não foi possível detectar automaticamente a aba de cortes neste arquivo.")
-                    abas_detectadas = df.attrs.get('abas_encontradas', '')
-                    aba_corte = df.attrs.get('aba_corte_detectada', '')
-                    fonte_corte = df.attrs.get('fonte_corte', '')
-                    erro_corte = df.attrs.get('erro_corte', '')
-                    if abas_detectadas:
-                        st.caption(f"Abas detectadas no arquivo principal: {abas_detectadas}")
-                    if aba_corte:
-                        st.caption(f"Aba de corte identificada: {aba_corte}")
-                    if fonte_corte:
-                        st.caption(f"Fonte utilizada para corte: {fonte_corte}")
-                    if erro_corte:
-                        st.caption(f"Detalhe: {erro_corte}")
-                    st.caption("Se o arquivo em produção tiver somente a Planilha1, publique um arquivo auxiliar com as datas de corte, por exemplo: datas_corte_fatura.xlsx")
-
             if mudou_tipo_volumetria:
                 for col in filtros:
                     chave_filtro = f'filtro_sidebar_{col}'
                     if chave_filtro in st.session_state:
                         st.session_state[chave_filtro] = []
-
             st.session_state['_ultimo_tipo_volumetria'] = tipo_volumetria
             mes_selecionado = meses_selecionados[0] if meses_selecionados else None
         else:
@@ -1047,12 +969,10 @@ with st.sidebar:
 dff_global = df[mask].copy()
 empresas_filtradas = filtros_selecionados.get('Empresa', [])
 
-# Loga visualizações normais apenas quando houver troca de visualização na sessão.
 if aba != "📊 Dashboard de Acessos":
     st.session_state.dashboard_acessos_sf_autenticado = False
     registrar_visualizacao_sf(aba)
 
-# Visualização protegida por senha. Na sidebar, aparece somente a opção Visualização.
 if aba == "📊 Dashboard de Acessos":
     if not st.session_state.dashboard_acessos_sf_autenticado:
         render_senha_dashboard_acessos_sf()
