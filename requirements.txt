@@ -5,3 +5,4 @@ openpyxl
 pyxlsb
 plotly
 xlsxwriter
+requests
