@@ -7,6 +7,7 @@ from datetime import datetime, date
 from zoneinfo import ZoneInfo
 import os
 import io
+import base64
 import hashlib
 
 
@@ -469,6 +470,11 @@ except Exception as e:
 # IDENTIFICAÇÃO DO USUÁRIO + DASHBOARD DE ACESSOS
 # INDICADOR: SEPARAÇÃO E FATURAMENTO
 # =============================
+# Persistência do histórico:
+# - Se as secrets do GitHub estiverem configuradas, o GitHub será a fonte principal.
+# - Se não estiverem configuradas, o app mantém backup local em CSV/Excel.
+# - Para não perder histórico em reinício/redeploy do Streamlit Cloud, configure o GitHub.
+
 LOG_ACESSOS_SF_CSV = "log_separacao_faturamento_acessos.csv"
 LOG_ACESSOS_SF_XLSX = "log_separacao_faturamento_acessos.xlsx"
 FUSO_HORARIO_LOG = "America/Sao_Paulo"
@@ -479,8 +485,32 @@ COLUNAS_LOG_SF = ["ID", "Usuario", "Data", "Indicador", "Visualizacao", "Detalhe
 COLUNAS_EXIBICAO_LOG_SF = ["Usuario", "Data", "Indicador", "Visualizacao", "Detalhe"]
 
 
+def _get_config_sf(nome: str, padrao: str = "") -> str:
+    """Busca configuração primeiro em st.secrets e depois em variável de ambiente."""
+    try:
+        valor = st.secrets.get(nome, "")
+        if valor:
+            return str(valor)
+    except Exception:
+        pass
+    return str(os.getenv(nome, padrao) or padrao)
+
+
+def github_sf_configurado() -> bool:
+    """Verifica se o log permanente no GitHub está configurado para este indicador."""
+    return bool(_get_config_sf("GITHUB_TOKEN") and _get_config_sf("GITHUB_REPO"))
+
+
+def _github_sf_info() -> dict:
+    return {
+        "token": _get_config_sf("GITHUB_TOKEN"),
+        "repo": _get_config_sf("GITHUB_REPO"),
+        "branch": _get_config_sf("GITHUB_BRANCH", "main"),
+        "path": _get_config_sf("GITHUB_LOG_SF_PATH", LOG_ACESSOS_SF_CSV),
+    }
+
+
 def _limpar_nome_visualizacao(aba_atual: str) -> str:
-    """Remove emojis/prefixos visuais para gravar o nome da visualização de forma executiva."""
     mapa = {
         "📅 Visão Diária": "Visão Diária",
         "📊 Evolução Mensal": "Evolução Mensal",
@@ -540,7 +570,88 @@ def _normalizar_log_sf(df_log: pd.DataFrame) -> pd.DataFrame:
     return df_log
 
 
-def carregar_log_sf() -> pd.DataFrame:
+def _df_log_sf_para_csv_bytes(df_log: pd.DataFrame) -> bytes:
+    df_log = _normalizar_log_sf(df_log)
+    df_csv = df_log.copy()
+    if not df_csv.empty:
+        df_csv["Data"] = df_csv["Data"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    return df_csv.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
+
+
+def _csv_bytes_para_log_sf(conteudo: bytes) -> pd.DataFrame:
+    if not conteudo:
+        return pd.DataFrame(columns=COLUNAS_LOG_SF)
+    try:
+        return _normalizar_log_sf(pd.read_csv(io.BytesIO(conteudo), sep=";", encoding="utf-8-sig"))
+    except Exception:
+        return pd.DataFrame(columns=COLUNAS_LOG_SF)
+
+
+def _github_ler_log_sf() -> tuple[pd.DataFrame, str | None]:
+    if not github_sf_configurado():
+        return pd.DataFrame(columns=COLUNAS_LOG_SF), None
+
+    try:
+        import requests
+        cfg = _github_sf_info()
+        url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['path']}"
+        headers = {
+            "Authorization": f"Bearer {cfg['token']}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        resp = requests.get(url, headers=headers, params={"ref": cfg["branch"]}, timeout=15)
+        if resp.status_code == 404:
+            return pd.DataFrame(columns=COLUNAS_LOG_SF), None
+        resp.raise_for_status()
+        dados = resp.json()
+        conteudo = base64.b64decode(dados.get("content", ""))
+        sha = dados.get("sha")
+        return _csv_bytes_para_log_sf(conteudo), sha
+    except Exception:
+        return pd.DataFrame(columns=COLUNAS_LOG_SF), None
+
+
+def _github_salvar_log_sf(df_log: pd.DataFrame, mensagem: str = "Atualiza log Separação e Faturamento") -> bool:
+    if not github_sf_configurado():
+        return False
+
+    try:
+        import requests
+        cfg = _github_sf_info()
+        url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['path']}"
+        headers = {
+            "Authorization": f"Bearer {cfg['token']}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+        _, sha_atual = _github_ler_log_sf()
+        payload = {
+            "message": mensagem,
+            "content": base64.b64encode(_df_log_sf_para_csv_bytes(df_log)).decode("utf-8"),
+            "branch": cfg["branch"],
+        }
+        if sha_atual:
+            payload["sha"] = sha_atual
+
+        resp = requests.put(url, headers=headers, json=payload, timeout=20)
+
+        if resp.status_code == 409:
+            df_remoto, sha_novo = _github_ler_log_sf()
+            df_final = _normalizar_log_sf(pd.concat([df_remoto, df_log], ignore_index=True))
+            payload["content"] = base64.b64encode(_df_log_sf_para_csv_bytes(df_final)).decode("utf-8")
+            if sha_novo:
+                payload["sha"] = sha_novo
+            resp = requests.put(url, headers=headers, json=payload, timeout=20)
+
+        resp.raise_for_status()
+        return True
+    except Exception:
+        return False
+
+
+def _ler_log_sf_local() -> pd.DataFrame:
     if os.path.exists(LOG_ACESSOS_SF_CSV):
         try:
             return _normalizar_log_sf(pd.read_csv(LOG_ACESSOS_SF_CSV, sep=";", encoding="utf-8-sig"))
@@ -556,17 +667,40 @@ def carregar_log_sf() -> pd.DataFrame:
     return pd.DataFrame(columns=COLUNAS_LOG_SF)
 
 
-def salvar_log_sf(df_log: pd.DataFrame):
+def salvar_log_sf_local(df_log: pd.DataFrame):
     df_log = _normalizar_log_sf(df_log)
-    df_csv = df_log.copy()
-    if not df_csv.empty:
-        df_csv["Data"] = df_csv["Data"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    df_csv.to_csv(LOG_ACESSOS_SF_CSV, index=False, sep=";", encoding="utf-8-sig")
-
+    Path(LOG_ACESSOS_SF_CSV).write_bytes(_df_log_sf_para_csv_bytes(df_log))
     try:
         df_log.to_excel(LOG_ACESSOS_SF_XLSX, index=False, engine="openpyxl")
     except Exception:
         pass
+
+
+def carregar_log_sf() -> pd.DataFrame:
+    """Carrega histórico usando GitHub como fonte principal quando configurado."""
+    if github_sf_configurado():
+        df_github, _sha = _github_ler_log_sf()
+        if not df_github.empty:
+            salvar_log_sf_local(df_github)
+            return df_github
+
+        # Migração inicial do histórico local para o GitHub.
+        df_local = _ler_log_sf_local()
+        if not df_local.empty:
+            _github_salvar_log_sf(df_local, "Migra histórico inicial do indicador Separação e Faturamento")
+            salvar_log_sf_local(df_local)
+            return df_local
+
+        return pd.DataFrame(columns=COLUNAS_LOG_SF)
+
+    return _ler_log_sf_local()
+
+
+def salvar_log_sf(df_log: pd.DataFrame, mensagem_github: str = "Atualiza log Separação e Faturamento"):
+    df_log = _normalizar_log_sf(df_log)
+    salvar_log_sf_local(df_log)
+    if github_sf_configurado():
+        _github_salvar_log_sf(df_log, mensagem_github)
 
 
 def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização", usuario: str | None = None):
@@ -598,7 +732,7 @@ def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização
 
         base = carregar_log_sf()
         base = pd.concat([base, novo], ignore_index=True)
-        salvar_log_sf(base)
+        salvar_log_sf(base, "Registra acesso no indicador Separação e Faturamento")
         st.session_state["_ultimo_log_sf_evento"] = {"chave": chave_evento, "data": data_hora_sp}
 
     except Exception as e:
@@ -617,7 +751,7 @@ def registrar_visualizacao_sf(aba_atual: str):
 def apagar_logs_sf() -> bool:
     try:
         vazio = pd.DataFrame(columns=COLUNAS_LOG_SF)
-        salvar_log_sf(vazio)
+        salvar_log_sf(vazio, "Apaga histórico do indicador Separação e Faturamento")
         st.session_state["_ultimo_log_sf_evento"] = {}
         st.session_state["_ultima_visualizacao_sf_logada"] = None
         return True
@@ -659,6 +793,9 @@ def render_dashboard_acessos_sf():
     st.subheader("📊 Dashboard de Acessos")
     st.caption("Histórico de acessos das visualizações do indicador Separação e Faturamento.")
 
+    fonte_log = "GitHub" if github_sf_configurado() else "arquivo local do app"
+    st.caption(f"Fonte do histórico: {fonte_log}")
+
     df_log = carregar_log_sf()
     if df_log.empty:
         st.warning("Ainda não há registros de acessos para este indicador.")
@@ -673,7 +810,7 @@ def render_dashboard_acessos_sf():
     data_max = df_log["Data"].max().date()
 
     # =============================
-    # FILTROS DE PERÍODO DO DASHBOARD DE ACESSOS
+    # FILTROS - PADRÃO IGUAL AO DASHBOARD DO CHATBOT
     # =============================
     st.markdown("### 🔎 Filtros")
     col_dt_ini, col_dt_fim = st.columns(2)
@@ -701,21 +838,16 @@ def render_dashboard_acessos_sf():
     if df_filtrado.empty:
         st.info("Não há acessos registrados para o período selecionado.")
     else:
-        data_min_filtro = df_filtrado["Data"].min().strftime("%d/%m/%Y %H:%M:%S")
-        data_max_filtro = df_filtrado["Data"].max().strftime("%d/%m/%Y %H:%M:%S")
-
         total_acessos = len(df_filtrado)
         usuarios_unicos = df_filtrado["Usuario"].nunique()
-        visualizacoes_unicas = df_filtrado["Visualizacao"].nunique()
-        dias_com_acesso = df_filtrado["Data"].dt.date.nunique()
+        indicadores_acessados = df_filtrado["Indicador"].nunique()
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         c1.metric("Total de acessos", f"{total_acessos:,}".replace(",", "."))
         c2.metric("Usuários únicos", f"{usuarios_unicos:,}".replace(",", "."))
-        c3.metric("Visualizações", f"{visualizacoes_unicas:,}".replace(",", "."))
-        c4.metric("Dias com acesso", f"{dias_com_acesso:,}".replace(",", "."))
+        c3.metric("Indicadores acessados", f"{indicadores_acessados:,}".replace(",", "."))
 
-        st.info(f"Histórico filtrado de {data_min_filtro} até {data_max_filtro}.")
+        st.caption(f"Histórico carregado de {data_inicio.strftime('%d/%m/%Y')} até {data_fim.strftime('%d/%m/%Y')}.")
 
         st.markdown("### 👤 Acessos por usuário")
         ranking_usuario = df_filtrado["Usuario"].fillna("Usuário").value_counts().reset_index()
