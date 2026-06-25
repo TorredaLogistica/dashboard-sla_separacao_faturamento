@@ -4,7 +4,10 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 import os
+import io
+import hashlib
 
 
 
@@ -462,6 +465,254 @@ except Exception as e:
     st.stop()
 
 
+# =============================
+# DASHBOARD DE ACESSOS - SEPARAÇÃO E FATURAMENTO
+# =============================
+LOG_ACESSOS_SF_CSV = "log_separacao_faturamento_acessos.csv"
+LOG_ACESSOS_SF_XLSX = "log_separacao_faturamento_acessos.xlsx"
+FUSO_HORARIO_LOG = "America/Sao_Paulo"
+SENHA_DASHBOARD_ACESSOS = "admin"
+ADMIN_LOG_USUARIO = "admin"
+ADMIN_LOG_SENHA = "admin"
+COLUNAS_LOG_SF = ["ID", "Usuario", "Data", "Indicador", "Visualizacao", "Detalhe"]
+COLUNAS_EXIBICAO_LOG_SF = ["Usuario", "Data", "Indicador", "Visualizacao", "Detalhe"]
+
+
+def _limpar_nome_visualizacao(aba_atual: str) -> str:
+    """Remove emojis/prefixos visuais para gravar o nome da visualização de forma executiva."""
+    mapa = {
+        "📅 Visão Diária": "Visão Diária",
+        "📊 Evolução Mensal": "Evolução Mensal",
+        "📦 Volumetria de Pedidos": "Volumetria de Pedidos",
+        "📊 Dashboard de Acessos": "Dashboard de Acessos",
+    }
+    return mapa.get(str(aba_atual), str(aba_atual))
+
+
+def _gerar_id_log_sf(usuario: str, data, indicador: str, visualizacao: str, detalhe: str) -> str:
+    try:
+        data_txt = pd.to_datetime(data, errors="coerce").strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        data_txt = str(data)
+    chave = f"{usuario}|{data_txt}|{indicador}|{visualizacao}|{detalhe}"
+    return hashlib.sha256(chave.encode("utf-8")).hexdigest()[:16]
+
+
+def _normalizar_log_sf(df_log: pd.DataFrame) -> pd.DataFrame:
+    if df_log is None or df_log.empty:
+        return pd.DataFrame(columns=COLUNAS_LOG_SF)
+
+    df_log = df_log.copy()
+    for col in COLUNAS_LOG_SF:
+        if col not in df_log.columns:
+            df_log[col] = "" if col != "Data" else pd.NaT
+
+    df_log = df_log[COLUNAS_LOG_SF].copy()
+    df_log["Usuario"] = df_log["Usuario"].fillna("Usuário").astype(str).str.strip().replace("", "Usuário")
+    df_log["Indicador"] = df_log["Indicador"].fillna("Separação e Faturamento").astype(str).str.strip().replace("", "Separação e Faturamento")
+    df_log["Visualizacao"] = df_log["Visualizacao"].fillna("Não informado").astype(str).str.strip().replace("", "Não informado")
+    df_log["Detalhe"] = df_log["Detalhe"].fillna("").astype(str).str.strip()
+    df_log["Data"] = pd.to_datetime(df_log["Data"], errors="coerce", dayfirst=True)
+    df_log = df_log.dropna(subset=["Data"]).copy()
+
+    if df_log.empty:
+        return pd.DataFrame(columns=COLUNAS_LOG_SF)
+
+    df_log["Data"] = df_log["Data"].dt.floor("s")
+
+    mask_id_vazio = df_log["ID"].fillna("").astype(str).str.strip().eq("")
+    if mask_id_vazio.any():
+        df_log.loc[mask_id_vazio, "ID"] = df_log.loc[mask_id_vazio].apply(
+            lambda r: _gerar_id_log_sf(r["Usuario"], r["Data"], r["Indicador"], r["Visualizacao"], r["Detalhe"]),
+            axis=1
+        )
+
+    df_log = df_log.drop_duplicates(subset=["ID"], keep="first")
+    df_log = df_log.drop_duplicates(subset=COLUNAS_EXIBICAO_LOG_SF, keep="first")
+    df_log = df_log.sort_values("Data", ascending=True).reset_index(drop=True)
+    return df_log
+
+
+def carregar_log_sf() -> pd.DataFrame:
+    if os.path.exists(LOG_ACESSOS_SF_CSV):
+        try:
+            return _normalizar_log_sf(pd.read_csv(LOG_ACESSOS_SF_CSV, sep=";", encoding="utf-8-sig"))
+        except Exception:
+            pass
+
+    # Migração inicial se existir somente Excel antigo.
+    if os.path.exists(LOG_ACESSOS_SF_XLSX):
+        try:
+            return _normalizar_log_sf(pd.read_excel(LOG_ACESSOS_SF_XLSX, engine="openpyxl"))
+        except Exception:
+            pass
+
+    return pd.DataFrame(columns=COLUNAS_LOG_SF)
+
+
+def salvar_log_sf(df_log: pd.DataFrame):
+    df_log = _normalizar_log_sf(df_log)
+    df_csv = df_log.copy()
+    if not df_csv.empty:
+        df_csv["Data"] = df_csv["Data"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    df_csv.to_csv(LOG_ACESSOS_SF_CSV, index=False, sep=";", encoding="utf-8-sig")
+
+    try:
+        df_log.to_excel(LOG_ACESSOS_SF_XLSX, index=False, engine="openpyxl")
+    except Exception:
+        pass
+
+
+def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização", usuario: str = "Usuário"):
+    """Registra acesso sem duplicar em reruns do Streamlit."""
+    try:
+        visualizacao = _limpar_nome_visualizacao(visualizacao)
+        usuario = (usuario or "Usuário").strip() or "Usuário"
+        detalhe = (detalhe or "").strip()
+        indicador = "Separação e Faturamento"
+        data_hora_sp = datetime.now(ZoneInfo(FUSO_HORARIO_LOG)).replace(tzinfo=None).replace(microsecond=0)
+
+        chave_evento = f"{usuario}|{indicador}|{visualizacao}|{detalhe}"
+        ultimo = st.session_state.get("_ultimo_log_sf_evento", {})
+        if ultimo.get("chave") == chave_evento:
+            try:
+                segundos = (data_hora_sp - ultimo.get("data")).total_seconds()
+                if 0 <= segundos <= 3:
+                    return
+            except Exception:
+                pass
+
+        novo = pd.DataFrame([{
+            "ID": _gerar_id_log_sf(usuario, data_hora_sp, indicador, visualizacao, detalhe),
+            "Usuario": usuario,
+            "Data": data_hora_sp,
+            "Indicador": indicador,
+            "Visualizacao": visualizacao,
+            "Detalhe": detalhe,
+        }])
+
+        base = carregar_log_sf()
+        base = pd.concat([base, novo], ignore_index=True)
+        salvar_log_sf(base)
+        st.session_state["_ultimo_log_sf_evento"] = {"chave": chave_evento, "data": data_hora_sp}
+
+    except Exception as e:
+        st.toast(f"Não foi possível registrar o acesso: {e}", icon="⚠️")
+
+
+def registrar_visualizacao_sf(aba_atual: str):
+    """Registra somente quando a visualização muda na sessão."""
+    visualizacao = _limpar_nome_visualizacao(aba_atual)
+    chave = f"view|{visualizacao}"
+    if st.session_state.get("_ultima_visualizacao_sf_logada") != chave:
+        registrar_log_sf(visualizacao, "Acesso à visualização")
+        st.session_state["_ultima_visualizacao_sf_logada"] = chave
+
+
+def apagar_logs_sf() -> bool:
+    try:
+        vazio = pd.DataFrame(columns=COLUNAS_LOG_SF)
+        salvar_log_sf(vazio)
+        st.session_state["_ultimo_log_sf_evento"] = {}
+        st.session_state["_ultima_visualizacao_sf_logada"] = None
+        return True
+    except Exception:
+        return False
+
+
+def render_senha_dashboard_acessos_sf():
+    st.markdown("## 🔐 Acesso restrito")
+    st.info("Informe a senha para acessar o Dashboard de Acessos.")
+
+    senha_digitada = st.text_input("Senha", type="password", key="senha_dashboard_acessos_sf")
+    if st.button("Entrar", use_container_width=True):
+        if senha_digitada == SENHA_DASHBOARD_ACESSOS:
+            st.session_state.dashboard_acessos_sf_autenticado = True
+            registrar_log_sf("Dashboard de Acessos", "Acesso autorizado")
+            st.rerun()
+        else:
+            st.error("Senha incorreta. Tente novamente.")
+
+
+def render_dashboard_acessos_sf():
+    st.subheader("📊 Dashboard de Acessos")
+    st.caption("Histórico de acessos das visualizações do indicador Separação e Faturamento.")
+
+    df_log = carregar_log_sf()
+    if df_log.empty:
+        st.warning("Ainda não há registros de acessos para este indicador.")
+    else:
+        df_log = df_log.dropna(subset=["Data"]).copy()
+
+    if not df_log.empty:
+        data_min = df_log["Data"].min().strftime("%d/%m/%Y %H:%M:%S")
+        data_max = df_log["Data"].max().strftime("%d/%m/%Y %H:%M:%S")
+
+        total_acessos = len(df_log)
+        visualizacoes_unicas = df_log["Visualizacao"].nunique()
+        dias_com_acesso = df_log["Data"].dt.date.nunique()
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total de acessos", f"{total_acessos:,}".replace(",", "."))
+        c2.metric("Visualizações acessadas", f"{visualizacoes_unicas:,}".replace(",", "."))
+        c3.metric("Dias com acesso", f"{dias_com_acesso:,}".replace(",", "."))
+
+        st.info(f"Histórico carregado de {data_min} até {data_max}.")
+
+        st.markdown("### 📌 Acessos por visualização")
+        ranking_visualizacao = df_log["Visualizacao"].fillna("Não informado").value_counts().reset_index()
+        ranking_visualizacao.columns = ["Visualização", "Qtd Acessos"]
+        st.dataframe(ranking_visualizacao, use_container_width=True, hide_index=True)
+        st.bar_chart(ranking_visualizacao.set_index("Visualização"))
+
+        st.markdown("### 📅 Acessos por dia")
+        acessos_dia = df_log.copy()
+        acessos_dia["Dia"] = acessos_dia["Data"].dt.date
+        acessos_dia = acessos_dia.groupby("Dia").size().reset_index(name="Qtd Acessos")
+        st.line_chart(acessos_dia.set_index("Dia"))
+
+        st.markdown("### 🕒 Últimos acessos")
+        ultimos = df_log.sort_values("Data", ascending=False).copy()
+        ultimos = ultimos[COLUNAS_EXIBICAO_LOG_SF].copy()
+        ultimos["Data"] = ultimos["Data"].dt.strftime("%d/%m/%Y %H:%M:%S")
+        st.dataframe(ultimos, use_container_width=True, hide_index=True)
+
+        csv_download = ultimos.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button(
+            label="⬇️ Baixar histórico em CSV",
+            data=csv_download,
+            file_name=LOG_ACESSOS_SF_CSV,
+            mime="text/csv",
+            use_container_width=True
+        )
+
+        if os.path.exists(LOG_ACESSOS_SF_XLSX):
+            with open(LOG_ACESSOS_SF_XLSX, "rb") as f:
+                st.download_button(
+                    label="⬇️ Baixar histórico em Excel",
+                    data=f,
+                    file_name=LOG_ACESSOS_SF_XLSX,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+
+    st.markdown("---")
+    with st.expander("🛡️ Administração do log - apagar registros"):
+        st.warning("Atenção: esta ação apaga todos os registros de acessos deste indicador.")
+        usuario_admin = st.text_input("Usuário administrador", key="usuario_admin_log_sf")
+        senha_admin = st.text_input("Senha administrador", type="password", key="senha_admin_log_sf")
+        confirmar = st.checkbox("Confirmo que desejo apagar todos os registros", key="confirmar_apagar_log_sf")
+
+        if st.button("🗑️ Apagar todos os registros", use_container_width=True):
+            if usuario_admin == ADMIN_LOG_USUARIO and senha_admin == ADMIN_LOG_SENHA and confirmar:
+                if apagar_logs_sf():
+                    st.success("Registros apagados com sucesso.")
+                    st.rerun()
+                else:
+                    st.error("Não foi possível apagar os registros.")
+            else:
+                st.error("Usuário/senha inválidos ou confirmação não marcada.")
+
 def _montar_cache_sidebar(df_base, filtros_cols):
     """Pré-calcula opções da sidebar para evitar recomputações custosas a cada rerun."""
     lista_meses = sorted(df_base['Mes_Ano'].dropna().unique(), key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
@@ -487,6 +738,9 @@ def _montar_cache_sidebar(df_base, filtros_cols):
         'opcoes_filtros': opcoes_filtros,
     }
 
+if 'dashboard_acessos_sf_autenticado' not in st.session_state:
+    st.session_state.dashboard_acessos_sf_autenticado = False
+
 # =============================
 # SIDEBAR
 # =============================
@@ -505,83 +759,100 @@ with st.sidebar:
         st.session_state['_cache_sidebar_base'] = _montar_cache_sidebar(df, filtros)
     cache_sidebar = st.session_state['_cache_sidebar_base']
 
-    aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos"], horizontal=True)
+    aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos", "📊 Dashboard de Acessos"], horizontal=True)
     lista_meses = cache_sidebar['lista_meses']
 
     tipo_volumetria = "Calendário (Data NF)"
     meses_selecionados = []
-
-    if '_ultimo_tipo_volumetria' not in st.session_state:
-        st.session_state['_ultimo_tipo_volumetria'] = None
-    if 'meses_volumetria_calendario' not in st.session_state:
-        st.session_state['meses_volumetria_calendario'] = []
-    if 'meses_volumetria_corte' not in st.session_state:
-        st.session_state['meses_volumetria_corte'] = []
-
-    if aba == "📦 Volumetria de Pedidos":
-        tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False, key='tipo_periodo_volumetria')
-        mudou_tipo_volumetria = st.session_state.get('_ultimo_tipo_volumetria') != tipo_volumetria
-        lista_meses_corte = cache_sidebar['lista_meses_corte']
-
-        if tipo_volumetria == "Calendário (Data NF)":
-            if mudou_tipo_volumetria or not st.session_state['meses_volumetria_calendario']:
-                st.session_state['meses_volumetria_calendario'] = [lista_meses[0]] if lista_meses else []
-            meses_selecionados = st.multiselect(
-                "Mês de Referência",
-                lista_meses,
-                key='meses_volumetria_calendario'
-            )
-        else:
-            if mudou_tipo_volumetria or not st.session_state['meses_volumetria_corte']:
-                st.session_state['meses_volumetria_corte'] = [lista_meses_corte[0]] if lista_meses_corte else []
-            meses_selecionados = st.multiselect(
-                "Mês de Corte da Fatura",
-                lista_meses_corte,
-                key='meses_volumetria_corte'
-            )
-            if not lista_meses_corte:
-                st.caption("⚠️ Não foi possível detectar automaticamente a aba de cortes neste arquivo.")
-                abas_detectadas = df.attrs.get('abas_encontradas', '')
-                aba_corte = df.attrs.get('aba_corte_detectada', '')
-                fonte_corte = df.attrs.get('fonte_corte', '')
-                erro_corte = df.attrs.get('erro_corte', '')
-                if abas_detectadas:
-                    st.caption(f"Abas detectadas no arquivo principal: {abas_detectadas}")
-                if aba_corte:
-                    st.caption(f"Aba de corte identificada: {aba_corte}")
-                if fonte_corte:
-                    st.caption(f"Fonte utilizada para corte: {fonte_corte}")
-                if erro_corte:
-                    st.caption(f"Detalhe: {erro_corte}")
-                st.caption("Se o arquivo em produção tiver somente a Planilha1, publique um arquivo auxiliar com as datas de corte, por exemplo: datas_corte_fatura.xlsx")
-
-        if mudou_tipo_volumetria:
-            for col in filtros:
-                chave_filtro = f'filtro_sidebar_{col}'
-                if chave_filtro in st.session_state:
-                    st.session_state[chave_filtro] = []
-
-        st.session_state['_ultimo_tipo_volumetria'] = tipo_volumetria
-        mes_selecionado = meses_selecionados[0] if meses_selecionados else None
-    else:
-        mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
-        meses_selecionados = [mes_selecionado] if mes_selecionado else []
-
+    mes_selecionado = lista_meses[0] if lista_meses else None
     mask = np.ones(len(df), dtype=bool)
     filtros_selecionados = {}
-    opcoes_filtros = cache_sidebar['opcoes_filtros']
 
-    for col in filtros:
-        if col in df.columns:
-            chave_filtro = f'filtro_sidebar_{col}'
-            if chave_filtro not in st.session_state:
-                st.session_state[chave_filtro] = []
-            vals = st.multiselect(col, opcoes_filtros.get(col, []), key=chave_filtro)
-            filtros_selecionados[col] = vals
-            if vals:
-                mask &= df[col].isin(vals)
+    # Quando selecionar Dashboard de Acessos, a sidebar mantém somente a opção Visualização,
+    # permitindo que o usuário volte para as outras visões sem exibir os demais filtros.
+    if aba != "📊 Dashboard de Acessos":
+        if '_ultimo_tipo_volumetria' not in st.session_state:
+            st.session_state['_ultimo_tipo_volumetria'] = None
+        if 'meses_volumetria_calendario' not in st.session_state:
+            st.session_state['meses_volumetria_calendario'] = []
+        if 'meses_volumetria_corte' not in st.session_state:
+            st.session_state['meses_volumetria_corte'] = []
+
+        if aba == "📦 Volumetria de Pedidos":
+            tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False, key='tipo_periodo_volumetria')
+            mudou_tipo_volumetria = st.session_state.get('_ultimo_tipo_volumetria') != tipo_volumetria
+            lista_meses_corte = cache_sidebar['lista_meses_corte']
+
+            if tipo_volumetria == "Calendário (Data NF)":
+                if mudou_tipo_volumetria or not st.session_state['meses_volumetria_calendario']:
+                    st.session_state['meses_volumetria_calendario'] = [lista_meses[0]] if lista_meses else []
+                meses_selecionados = st.multiselect(
+                    "Mês de Referência",
+                    lista_meses,
+                    key='meses_volumetria_calendario'
+                )
+            else:
+                if mudou_tipo_volumetria or not st.session_state['meses_volumetria_corte']:
+                    st.session_state['meses_volumetria_corte'] = [lista_meses_corte[0]] if lista_meses_corte else []
+                meses_selecionados = st.multiselect(
+                    "Mês de Corte da Fatura",
+                    lista_meses_corte,
+                    key='meses_volumetria_corte'
+                )
+                if not lista_meses_corte:
+                    st.caption("⚠️ Não foi possível detectar automaticamente a aba de cortes neste arquivo.")
+                    abas_detectadas = df.attrs.get('abas_encontradas', '')
+                    aba_corte = df.attrs.get('aba_corte_detectada', '')
+                    fonte_corte = df.attrs.get('fonte_corte', '')
+                    erro_corte = df.attrs.get('erro_corte', '')
+                    if abas_detectadas:
+                        st.caption(f"Abas detectadas no arquivo principal: {abas_detectadas}")
+                    if aba_corte:
+                        st.caption(f"Aba de corte identificada: {aba_corte}")
+                    if fonte_corte:
+                        st.caption(f"Fonte utilizada para corte: {fonte_corte}")
+                    if erro_corte:
+                        st.caption(f"Detalhe: {erro_corte}")
+                    st.caption("Se o arquivo em produção tiver somente a Planilha1, publique um arquivo auxiliar com as datas de corte, por exemplo: datas_corte_fatura.xlsx")
+
+            if mudou_tipo_volumetria:
+                for col in filtros:
+                    chave_filtro = f'filtro_sidebar_{col}'
+                    if chave_filtro in st.session_state:
+                        st.session_state[chave_filtro] = []
+
+            st.session_state['_ultimo_tipo_volumetria'] = tipo_volumetria
+            mes_selecionado = meses_selecionados[0] if meses_selecionados else None
+        else:
+            mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
+            meses_selecionados = [mes_selecionado] if mes_selecionado else []
+
+        opcoes_filtros = cache_sidebar['opcoes_filtros']
+        for col in filtros:
+            if col in df.columns:
+                chave_filtro = f'filtro_sidebar_{col}'
+                if chave_filtro not in st.session_state:
+                    st.session_state[chave_filtro] = []
+                vals = st.multiselect(col, opcoes_filtros.get(col, []), key=chave_filtro)
+                filtros_selecionados[col] = vals
+                if vals:
+                    mask &= df[col].isin(vals)
 dff_global = df[mask].copy()
 empresas_filtradas = filtros_selecionados.get('Empresa', [])
+
+# Loga as visualizações normais apenas quando houver troca de visualização na sessão.
+if aba != "📊 Dashboard de Acessos":
+    st.session_state.dashboard_acessos_sf_autenticado = False
+    registrar_visualizacao_sf(aba)
+
+# Nova visualização protegida por senha.
+# Ao selecioná-la, a sidebar mostra somente o filtro Visualização para facilitar o retorno.
+if aba == "📊 Dashboard de Acessos":
+    if not st.session_state.dashboard_acessos_sf_autenticado:
+        render_senha_dashboard_acessos_sf()
+    else:
+        render_dashboard_acessos_sf()
+    st.stop()
 
 
 
