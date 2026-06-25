@@ -492,7 +492,6 @@ def _limpar_nome_visualizacao(aba_atual: str) -> str:
 
 
 def obter_usuario_logado_sf() -> str:
-    """Retorna o usuário identificado na entrada do indicador."""
     usuario = st.session_state.get("usuario_logado_sf", "")
     usuario = str(usuario).strip()
     return usuario if usuario else "Usuário"
@@ -528,7 +527,6 @@ def _normalizar_log_sf(df_log: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=COLUNAS_LOG_SF)
 
     df_log["Data"] = df_log["Data"].dt.floor("s")
-
     mask_id_vazio = df_log["ID"].fillna("").astype(str).str.strip().eq("")
     if mask_id_vazio.any():
         df_log.loc[mask_id_vazio, "ID"] = df_log.loc[mask_id_vazio].apply(
@@ -536,7 +534,6 @@ def _normalizar_log_sf(df_log: pd.DataFrame) -> pd.DataFrame:
             axis=1
         )
 
-    # Remove duplicidades exatas e por conteúdo principal.
     df_log = df_log.drop_duplicates(subset=["ID"], keep="first")
     df_log = df_log.drop_duplicates(subset=COLUNAS_EXIBICAO_LOG_SF, keep="first")
     df_log = df_log.sort_values("Data", ascending=True).reset_index(drop=True)
@@ -544,7 +541,6 @@ def _normalizar_log_sf(df_log: pd.DataFrame) -> pd.DataFrame:
 
 
 def carregar_log_sf() -> pd.DataFrame:
-    # Fonte principal local: CSV. O Excel entra como backup/migração inicial.
     if os.path.exists(LOG_ACESSOS_SF_CSV):
         try:
             return _normalizar_log_sf(pd.read_csv(LOG_ACESSOS_SF_CSV, sep=";", encoding="utf-8-sig"))
@@ -574,7 +570,6 @@ def salvar_log_sf(df_log: pd.DataFrame):
 
 
 def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização", usuario: str | None = None):
-    """Registra acesso sem duplicar em reruns do Streamlit."""
     try:
         visualizacao = _limpar_nome_visualizacao(visualizacao)
         usuario = (usuario or obter_usuario_logado_sf()).strip() or "Usuário"
@@ -611,7 +606,6 @@ def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização
 
 
 def registrar_visualizacao_sf(aba_atual: str):
-    """Registra somente quando a visualização muda na sessão."""
     visualizacao = _limpar_nome_visualizacao(aba_atual)
     usuario = obter_usuario_logado_sf()
     chave = f"view|{usuario}|{visualizacao}"
@@ -632,10 +626,8 @@ def apagar_logs_sf() -> bool:
 
 
 def render_identificacao_usuario_sf():
-    """Solicita o nome do usuário antes de liberar o indicador."""
     st.markdown("## 🔐 Identificação de acesso")
     st.info("Para acessar o indicador de Separação e Faturamento, informe seu nome de usuário.")
-
     nome_digitado = st.text_input("Nome do usuário", key="input_usuario_logado_sf")
 
     if st.button("Acessar indicador", use_container_width=True):
@@ -653,7 +645,6 @@ def render_identificacao_usuario_sf():
 def render_senha_dashboard_acessos_sf():
     st.markdown("## 🔐 Acesso restrito")
     st.info("Informe a senha para acessar o Dashboard de Acessos.")
-
     senha_digitada = st.text_input("Senha", type="password", key="senha_dashboard_acessos_sf")
     if st.button("Entrar", use_container_width=True):
         if senha_digitada == SENHA_DASHBOARD_ACESSOS:
@@ -671,17 +662,52 @@ def render_dashboard_acessos_sf():
     df_log = carregar_log_sf()
     if df_log.empty:
         st.warning("Ainda não há registros de acessos para este indicador.")
+        return
+
+    df_log = df_log.dropna(subset=["Data"]).copy()
+    if df_log.empty:
+        st.warning("O arquivo de log existe, mas ainda não possui datas válidas.")
+        return
+
+    data_min = df_log["Data"].min().date()
+    data_max = df_log["Data"].max().date()
+
+    # =============================
+    # FILTROS DE PERÍODO DO DASHBOARD DE ACESSOS
+    # =============================
+    st.markdown("### 🔎 Filtros")
+    col_dt_ini, col_dt_fim = st.columns(2)
+    data_inicio = col_dt_ini.date_input(
+        "Data início",
+        value=data_min,
+        min_value=data_min,
+        max_value=data_max,
+        format="DD/MM/YYYY",
+        key="sf_log_data_inicio"
+    )
+    data_fim = col_dt_fim.date_input(
+        "Data fim",
+        value=data_max,
+        min_value=data_min,
+        max_value=data_max,
+        format="DD/MM/YYYY",
+        key="sf_log_data_fim"
+    )
+
+    inicio = pd.to_datetime(data_inicio)
+    fim = pd.to_datetime(data_fim) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+    df_filtrado = df_log[(df_log["Data"] >= inicio) & (df_log["Data"] <= fim)].copy()
+
+    if df_filtrado.empty:
+        st.info("Não há acessos registrados para o período selecionado.")
     else:
-        df_log = df_log.dropna(subset=["Data"]).copy()
+        data_min_filtro = df_filtrado["Data"].min().strftime("%d/%m/%Y %H:%M:%S")
+        data_max_filtro = df_filtrado["Data"].max().strftime("%d/%m/%Y %H:%M:%S")
 
-    if not df_log.empty:
-        data_min = df_log["Data"].min().strftime("%d/%m/%Y %H:%M:%S")
-        data_max = df_log["Data"].max().strftime("%d/%m/%Y %H:%M:%S")
-
-        total_acessos = len(df_log)
-        usuarios_unicos = df_log["Usuario"].nunique()
-        visualizacoes_unicas = df_log["Visualizacao"].nunique()
-        dias_com_acesso = df_log["Data"].dt.date.nunique()
+        total_acessos = len(df_filtrado)
+        usuarios_unicos = df_filtrado["Usuario"].nunique()
+        visualizacoes_unicas = df_filtrado["Visualizacao"].nunique()
+        dias_com_acesso = df_filtrado["Data"].dt.date.nunique()
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total de acessos", f"{total_acessos:,}".replace(",", "."))
@@ -689,50 +715,50 @@ def render_dashboard_acessos_sf():
         c3.metric("Visualizações", f"{visualizacoes_unicas:,}".replace(",", "."))
         c4.metric("Dias com acesso", f"{dias_com_acesso:,}".replace(",", "."))
 
-        st.info(f"Histórico carregado de {data_min} até {data_max}.")
+        st.info(f"Histórico filtrado de {data_min_filtro} até {data_max_filtro}.")
 
         st.markdown("### 👤 Acessos por usuário")
-        ranking_usuario = df_log["Usuario"].fillna("Usuário").value_counts().reset_index()
+        ranking_usuario = df_filtrado["Usuario"].fillna("Usuário").value_counts().reset_index()
         ranking_usuario.columns = ["Usuário", "Qtd Acessos"]
         st.dataframe(ranking_usuario, use_container_width=True, hide_index=True)
         st.bar_chart(ranking_usuario.set_index("Usuário"))
 
         st.markdown("### 📌 Acessos por visualização")
-        ranking_visualizacao = df_log["Visualizacao"].fillna("Não informado").value_counts().reset_index()
+        ranking_visualizacao = df_filtrado["Visualizacao"].fillna("Não informado").value_counts().reset_index()
         ranking_visualizacao.columns = ["Visualização", "Qtd Acessos"]
         st.dataframe(ranking_visualizacao, use_container_width=True, hide_index=True)
         st.bar_chart(ranking_visualizacao.set_index("Visualização"))
 
         st.markdown("### 📅 Acessos por dia")
-        acessos_dia = df_log.copy()
+        acessos_dia = df_filtrado.copy()
         acessos_dia["Dia"] = acessos_dia["Data"].dt.date
         acessos_dia = acessos_dia.groupby("Dia").size().reset_index(name="Qtd Acessos")
         st.line_chart(acessos_dia.set_index("Dia"))
 
         st.markdown("### 🕒 Últimos acessos")
-        ultimos = df_log.sort_values("Data", ascending=False).copy()
+        ultimos = df_filtrado.sort_values("Data", ascending=False).copy()
         ultimos = ultimos[COLUNAS_EXIBICAO_LOG_SF].copy()
         ultimos["Data"] = ultimos["Data"].dt.strftime("%d/%m/%Y %H:%M:%S")
         st.dataframe(ultimos, use_container_width=True, hide_index=True)
 
         csv_download = ultimos.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button(
-            label="⬇️ Baixar histórico em CSV",
+            label="⬇️ Baixar histórico filtrado em CSV",
             data=csv_download,
             file_name=LOG_ACESSOS_SF_CSV,
             mime="text/csv",
             use_container_width=True
         )
 
-        if os.path.exists(LOG_ACESSOS_SF_XLSX):
-            with open(LOG_ACESSOS_SF_XLSX, "rb") as f:
-                st.download_button(
-                    label="⬇️ Baixar histórico em Excel",
-                    data=f,
-                    file_name=LOG_ACESSOS_SF_XLSX,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+    if os.path.exists(LOG_ACESSOS_SF_XLSX):
+        with open(LOG_ACESSOS_SF_XLSX, "rb") as f:
+            st.download_button(
+                label="⬇️ Baixar histórico completo em Excel",
+                data=f,
+                file_name=LOG_ACESSOS_SF_XLSX,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
     st.markdown("---")
     with st.expander("🛡️ Administração do log - apagar registros"):
