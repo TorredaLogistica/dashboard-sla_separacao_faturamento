@@ -191,6 +191,7 @@ if st.button("🔄 Atualizar dados"):
         st.session_state.pop(chave, None)
     for col in ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']:
         st.session_state.pop(f'filtro_sidebar_{col}', None)
+    st.session_state['_forcou_atualizacao_base_sf'] = True
     st.rerun()
 
 # =============================
@@ -198,8 +199,10 @@ if st.button("🔄 Atualizar dados"):
 # =============================
 
 
-@st.cache_data
-def load_data(path):
+@st.cache_data(show_spinner="Carregando base atualizada...")
+def load_data(path, data_modificacao):
+    # data_modificacao entra na chave do cache.
+    # Quando o arquivo XLSB for atualizado no GitHub/Streamlit, o cache é invalidado automaticamente.
     # =============================
     # LEITURA ESTÁVEL DA BASE PRINCIPAL (mantém o comportamento original)
     # =============================
@@ -461,10 +464,14 @@ if not os.path.exists(caminho_arquivo):
     st.stop()
 
 try:
-    df = load_data(caminho_arquivo)
+    data_modificacao_base = os.path.getmtime(caminho_arquivo)
+    df = load_data(caminho_arquivo, data_modificacao_base)
 except Exception as e:
     st.error(f"Erro ao carregar a base: {e}")
     st.stop()
+
+if st.session_state.pop('_forcou_atualizacao_base_sf', False):
+    st.success('Base recarregada com sucesso.')
 
 
 # =============================
