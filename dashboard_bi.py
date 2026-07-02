@@ -182,9 +182,9 @@ def normalizar_pedido(serie: pd.Series) -> pd.Series:
     return s.replace({'nan': '', 'None': '', '<NA>': ''})
 
 # 🔥 BOTÃO DE ATUALIZAÇÃO RÁPIDA
-# Não usa st.cache_data.clear() para não deixar o painel lento.
-# A base principal já atualiza automaticamente quando o arquivo XLSB muda,
-# pois a função load_data recebe a data de modificação do arquivo.
+# Não usa st.cache_data.clear(), pois isso deixa o painel lento.
+# A base principal é recarregada automaticamente quando o XLSB muda,
+# usando a data/hora de modificação do arquivo como chave do cache.
 if st.button("🔄 Atualizar dados"):
     for chave in [
         '_ultimo_tipo_volumetria',
@@ -630,7 +630,7 @@ def _github_ler_log_sf() -> tuple[pd.DataFrame, str | None]:
         import requests
         cfg = _github_sf_info()
         url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['path']}"
-        resp = requests.get(url, headers=_github_headers_sf(), params={"ref": cfg["branch"]}, timeout=8)
+        resp = requests.get(url, headers=_github_headers_sf(), params={"ref": cfg["branch"]}, timeout=3)
 
         if resp.status_code == 404:
             return pd.DataFrame(columns=COLUNAS_LOG_SF), None
@@ -681,7 +681,7 @@ def _github_salvar_log_sf(df_log: pd.DataFrame, mensagem: str = "Atualiza log Se
             payload["sha"] = sha_atual
 
         for tentativa in range(2):
-            resp = requests.put(url, headers=_github_headers_sf(), json=payload, timeout=10)
+            resp = requests.put(url, headers=_github_headers_sf(), json=payload, timeout=5)
 
             if resp.status_code == 409 and tentativa == 0:
                 # Outro acesso gravou ao mesmo tempo. Relê, junta tudo e tenta mais uma vez.
@@ -735,36 +735,45 @@ def salvar_log_sf_local(df_log: pd.DataFrame):
         st.session_state["_aviso_log_sf"] = f"Falha controlada no backup local do log: {type(e).__name__}"
 
 
-def carregar_log_sf() -> pd.DataFrame:
-    """Carrega histórico priorizando GitHub, com fallback local sem quebrar o app."""
+def carregar_log_sf(sincronizar_github: bool = False) -> pd.DataFrame:
+    """Carrega log de forma rápida.
+
+    Padrão de performance:
+    - No uso normal do indicador, lê apenas o CSV local do app.
+    - Só consulta o GitHub quando sincronizar_github=True, evitando lentidão e erro de conexão a cada rerun.
+    """
     try:
         df_local = _ler_log_sf_local()
 
-        if github_sf_configurado():
+        if sincronizar_github and github_sf_configurado():
             df_github, _sha = _github_ler_log_sf()
             df_final = _normalizar_log_sf(pd.concat([df_github, df_local], ignore_index=True))
-            if not df_final.empty:
-                salvar_log_sf_local(df_final)
-                # Se existia algo só local, tenta subir para o GitHub sem travar o app.
-                _github_salvar_log_sf(df_final, "Sincroniza histórico Separação e Faturamento")
-                return df_final
-            return pd.DataFrame(columns=COLUNAS_LOG_SF)
+            salvar_log_sf_local(df_final)
+            return df_final
 
         return df_local
     except Exception as e:
         st.session_state["_aviso_log_sf"] = f"Falha controlada ao carregar log: {type(e).__name__}"
         return _ler_log_sf_local()
 
+def salvar_log_sf(df_log: pd.DataFrame, mensagem_github: str = "Atualiza log Separação e Faturamento", sincronizar_github: bool = False):
+    """Salva log de forma rápida.
 
-def salvar_log_sf(df_log: pd.DataFrame, mensagem_github: str = "Atualiza log Separação e Faturamento"):
-    """Salva primeiro localmente e tenta persistir no GitHub sem derrubar o dashboard."""
+    Para evitar lentidão/conexão no Streamlit, o uso normal salva apenas no arquivo local.
+    A sincronização com GitHub fica opcional e deve ser chamada apenas quando necessário.
+    """
     try:
         df_log = _normalizar_log_sf(df_log)
         salvar_log_sf_local(df_log)
-        if github_sf_configurado():
+
+        if sincronizar_github and github_sf_configurado():
             ok = _github_salvar_log_sf(df_log, mensagem_github)
-            if not ok:
+            if ok:
+                st.session_state["_log_sf_pendente_sync"] = False
+            else:
                 st.session_state["_log_sf_pendente_sync"] = True
+        elif github_sf_configurado():
+            st.session_state["_log_sf_pendente_sync"] = True
     except Exception as e:
         st.session_state["_aviso_log_sf"] = f"Falha controlada ao salvar log: {type(e).__name__}"
 
@@ -818,7 +827,7 @@ def registrar_visualizacao_sf(aba_atual: str):
 def apagar_logs_sf() -> bool:
     try:
         vazio = pd.DataFrame(columns=COLUNAS_LOG_SF)
-        salvar_log_sf(vazio, "Apaga histórico do indicador Separação e Faturamento")
+        salvar_log_sf(vazio, "Apaga histórico do indicador Separação e Faturamento", sincronizar_github=True)
         st.session_state["_ultimo_log_sf_evento"] = {}
         st.session_state["_ultima_visualizacao_sf_logada"] = None
         return True
@@ -861,10 +870,25 @@ def render_dashboard_acessos_sf():
     if st.session_state.get("_log_sf_pendente_sync"):
         st.info("Existe log salvo no backup local aguardando sincronização com GitHub.")
     st.caption("Histórico de acessos das visualizações do indicador Separação e Faturamento.")
-    fonte_log = "GitHub" if github_sf_configurado() else "arquivo local do app"
+    fonte_log = "arquivo local rápido"
+    if github_sf_configurado():
+        fonte_log += " | GitHub disponível para sincronização manual"
     st.caption(f"Fonte do histórico: {fonte_log}")
 
-    df_log = carregar_log_sf()
+    sincronizar_agora = False
+    if github_sf_configurado():
+        sincronizar_agora = st.button("🔄 Sincronizar log com GitHub agora", use_container_width=True)
+        if sincronizar_agora:
+            st.info("Sincronizando histórico com GitHub. Aguarde alguns segundos...")
+
+    df_log = carregar_log_sf(sincronizar_github=sincronizar_agora)
+
+    if sincronizar_agora and not df_log.empty:
+        salvar_log_sf(df_log, "Sincroniza histórico Separação e Faturamento", sincronizar_github=True)
+        try:
+            st.toast("Log sincronizado com GitHub.", icon="✅")
+        except Exception:
+            st.success("Log sincronizado com GitHub.")
     if df_log.empty:
         st.warning("Ainda não há registros de acessos para este indicador.")
         return
