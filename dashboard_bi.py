@@ -11,6 +11,7 @@ import io
 import base64
 import hashlib
 
+st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
 # =============================
 # TELA DE RECUPERAÇÃO ANTES DO INDICADOR
@@ -18,11 +19,10 @@ import hashlib
 def reiniciar_app_local_sf():
     """Reinicia a sessão do Streamlit com st.rerun().
 
-    Observação: isso não executa o Reboot App real do Streamlit Cloud.
-    O Reboot real do Cloud só fica disponível pelo menu Manage app > Reboot app.
+    Importante: não é o Reboot real do Streamlit Cloud. O Reboot real ainda fica em Manage app > Reboot app.
     """
     for chave in list(st.session_state.keys()):
-        if str(chave).startswith(("_", "filtro_sidebar", "sf_", "input_usuario", "senha_")):
+        if str(chave).startswith(("_", "filtro_sidebar", "sf_", "input_usuario", "senha_", "usuario_", "acesso_")):
             st.session_state.pop(chave, None)
     try:
         st.cache_data.clear()
@@ -31,26 +31,26 @@ def reiniciar_app_local_sf():
     st.rerun()
 
 
-def render_tela_recuperacao_sf(erro: Exception):
-    """Mostra uma tela amigável com botão de reinício quando o erro é capturado pelo Python."""
+def render_tela_recuperacao_sf(erro):
+    """Tela exibida quando o erro é capturado pelo Python antes de o indicador carregar."""
     st.markdown("""
-    <div style="max-width:760px;margin:90px auto 0 auto;text-align:center;font-family:Arial, sans-serif;">
-        <div style="font-size:54px;line-height:1;">⚠️</div>
+    <div style="max-width:780px;margin:90px auto 0 auto;text-align:center;font-family:Arial, sans-serif;">
+        <div style="font-size:56px;line-height:1;">⚠️</div>
         <h1 style="margin-bottom:8px;color:#222;">O indicador encontrou uma instabilidade</h1>
-        <p style="font-size:17px;color:#444;">
-            Clique no botão abaixo para reiniciar a sessão do indicador.
+        <p style="font-size:17px;color:#444;margin-bottom:22px;">
+            Clique no botão abaixo para reiniciar a sessão antes de acessar o indicador.
         </p>
     </div>
     """, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([1, 1.25, 1])
+    col1, col2, col3 = st.columns([1, 1.35, 1])
     with col2:
         if st.button("🔁 Reiniciar indicador agora", use_container_width=True):
             reiniciar_app_local_sf()
 
     with st.expander("Detalhe técnico"):
         st.code(f"{type(erro).__name__}: {erro}")
-        st.caption("Se essa tela continuar aparecendo, use Manage app > Reboot app no Streamlit Cloud.")
+        st.caption("Se a tela padrão 'Oh no' continuar aparecendo, o erro ocorreu antes do Python renderizar a tela. Nesse caso, só o Reboot app do Streamlit Cloud ou ajuste de sintaxe/dependência resolve.")
 
 
 
@@ -141,7 +141,6 @@ def main():
         )
         fig = _corrigir_undefined_plotly(fig)
         return fig
-    st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
     # =============================
     # CABEÇALHO (COM AJUSTE DE FUSO HORÁRIO)
@@ -227,8 +226,6 @@ def main():
         return s.replace({'nan': '', 'None': '', '<NA>': ''})
 
     # 🔥 BOTÃO DE ATUALIZAÇÃO RÁPIDA
-    # Não limpa o cache global. Isso evita lentidão e erro de conexão.
-    # A base recarrega automaticamente quando o arquivo XLSB muda no repositório.
     if st.button("🔄 Atualizar dados"):
         for chave in [
             '_ultimo_tipo_volumetria',
@@ -236,10 +233,8 @@ def main():
             'meses_volumetria_corte'
         ]:
             st.session_state.pop(chave, None)
-
         for col in ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']:
             st.session_state.pop(f'filtro_sidebar_{col}', None)
-
         st.session_state['_forcou_atualizacao_base_sf'] = True
         st.rerun()
 
@@ -797,23 +792,24 @@ def main():
 
 
     def salvar_log_sf_local(df_log: pd.DataFrame):
-        """Backup local rápido em CSV.
-
-        Importante: não gera XLSX a cada acesso, pois openpyxl deixa o app lento no Streamlit Cloud.
-        O Excel pode ser baixado pelo Dashboard de Acessos quando necessário.
-        """
+        """Backup local. No Streamlit Cloud esse arquivo pode sumir no reboot; GitHub é o histórico definitivo."""
         try:
             df_log = _normalizar_log_sf(df_log)
             Path(LOG_ACESSOS_SF_CSV).write_bytes(_df_log_sf_para_csv_bytes(df_log))
+            try:
+                df_log.to_excel(LOG_ACESSOS_SF_XLSX, index=False, engine="openpyxl")
+            except Exception:
+                pass
         except Exception as e:
             st.session_state["_aviso_log_sf"] = f"Falha controlada no backup local do log: {type(e).__name__}"
 
 
     def carregar_log_sf(sincronizar_github: bool = False) -> pd.DataFrame:
-        """Carrega log sem travar o app.
+        """Carrega log de forma rápida.
 
-        - Uso normal: lê somente o CSV local.
-        - GitHub: somente quando sincronizar_github=True, acionado manualmente no Dashboard de Acessos.
+        Padrão de performance:
+        - No uso normal do indicador, lê apenas o CSV local do app.
+        - Só consulta o GitHub quando sincronizar_github=True, evitando lentidão e erro de conexão a cada rerun.
         """
         try:
             df_local = _ler_log_sf_local()
@@ -829,11 +825,11 @@ def main():
             st.session_state["_aviso_log_sf"] = f"Falha controlada ao carregar log: {type(e).__name__}"
             return _ler_log_sf_local()
 
-
     def salvar_log_sf(df_log: pd.DataFrame, mensagem_github: str = "Atualiza log Separação e Faturamento", sincronizar_github: bool = False):
-        """Salva log sem lentidão.
+        """Salva log de forma rápida.
 
-        No fluxo normal salva apenas CSV local. O GitHub é usado apenas em sincronização manual.
+        Para evitar lentidão/conexão no Streamlit, o uso normal salva apenas no arquivo local.
+        A sincronização com GitHub fica opcional e deve ser chamada apenas quando necessário.
         """
         try:
             df_log = _normalizar_log_sf(df_log)
@@ -841,38 +837,18 @@ def main():
 
             if sincronizar_github and github_sf_configurado():
                 ok = _github_salvar_log_sf(df_log, mensagem_github)
-                st.session_state["_log_sf_pendente_sync"] = not ok
+                if ok:
+                    st.session_state["_log_sf_pendente_sync"] = False
+                else:
+                    st.session_state["_log_sf_pendente_sync"] = True
             elif github_sf_configurado():
                 st.session_state["_log_sf_pendente_sync"] = True
         except Exception as e:
             st.session_state["_aviso_log_sf"] = f"Falha controlada ao salvar log: {type(e).__name__}"
 
 
-    def anexar_log_sf_rapido(novo: pd.DataFrame):
-        """Acrescenta uma linha no CSV sem reler e regravar o histórico inteiro."""
-        try:
-            novo = _normalizar_log_sf(novo)
-            if novo.empty:
-                return
-            df_csv = novo.copy()
-            df_csv["Data"] = df_csv["Data"].dt.strftime("%Y-%m-%d %H:%M:%S")
-            arquivo_existe = os.path.exists(LOG_ACESSOS_SF_CSV) and os.path.getsize(LOG_ACESSOS_SF_CSV) > 0
-            df_csv.to_csv(
-                LOG_ACESSOS_SF_CSV,
-                mode="a",
-                header=not arquivo_existe,
-                index=False,
-                sep=";",
-                encoding="utf-8-sig"
-            )
-            if github_sf_configurado():
-                st.session_state["_log_sf_pendente_sync"] = True
-        except Exception as e:
-            st.session_state["_aviso_log_sf"] = f"Falha controlada ao anexar log: {type(e).__name__}"
-
-
     def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização", usuario: str | None = None):
-        """Registra acesso de forma rápida, sem consultar GitHub e sem regravar histórico inteiro."""
+        """Registra acesso sem deixar falha de log quebrar todo o app."""
         try:
             visualizacao = _limpar_nome_visualizacao(visualizacao)
             usuario = (usuario or obter_usuario_logado_sf()).strip() or "Usuário"
@@ -880,6 +856,7 @@ def main():
             indicador = "Separação e Faturamento"
             data_hora_sp = datetime.now(ZoneInfo(FUSO_HORARIO_LOG)).replace(tzinfo=None).replace(microsecond=0)
 
+            # Evita duplicidade em reruns muito próximos, mas sem bloquear novos acessos futuros.
             chave_evento = f"{usuario}|{indicador}|{visualizacao}|{detalhe}"
             ultimo = st.session_state.get("_ultimo_log_sf_evento", {})
             if ultimo.get("chave") == chave_evento:
@@ -899,11 +876,13 @@ def main():
                 "Detalhe": detalhe,
             }])
 
-            anexar_log_sf_rapido(novo)
+            base = carregar_log_sf()
+            base = _normalizar_log_sf(pd.concat([base, novo], ignore_index=True))
+            salvar_log_sf(base, "Registra acesso no indicador Separação e Faturamento")
             st.session_state["_ultimo_log_sf_evento"] = {"chave": chave_evento, "data": data_hora_sp}
         except Exception as e:
+            # Importante: nunca usar algo que possa quebrar dentro do except.
             st.session_state["_aviso_log_sf"] = f"Não foi possível registrar o acesso: {type(e).__name__}"
-
 
     def registrar_visualizacao_sf(aba_atual: str):
         visualizacao = _limpar_nome_visualizacao(aba_atual)
@@ -1716,8 +1695,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as erro_app:
-        # Não capturar controles internos do Streamlit, caso sejam Exception na versão instalada.
-        if type(erro_app).__name__ in {"RerunException", "StopException", "StreamlitAPIException"}:
+    except BaseException as erro_app:
+        # Não interceptar controles internos de parada/rerun do Streamlit.
+        nome_erro = type(erro_app).__name__
+        if nome_erro in {"RerunException", "StopException", "RerunData", "StopException"}:
             raise
         render_tela_recuperacao_sf(erro_app)
