@@ -4,12 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, date
-from zoneinfo import ZoneInfo
-from pathlib import Path
 import os
-import io
-import base64
-import hashlib
 
 
 
@@ -181,22 +176,16 @@ def normalizar_pedido(serie: pd.Series) -> pd.Series:
 
     return s.replace({'nan': '', 'None': '', '<NA>': ''})
 
-# 🔥 BOTÃO DE ATUALIZAÇÃO RÁPIDA
-# Não usa st.cache_data.clear(), pois isso deixa o painel lento.
-# A base principal é recarregada automaticamente quando o XLSB muda,
-# usando a data/hora de modificação do arquivo como chave do cache.
+# 🔥 BOTÃO DE ATUALIZAÇÃO (COLOCA AQUI)
 if st.button("🔄 Atualizar dados"):
+    st.cache_data.clear()
     for chave in [
-        '_ultimo_tipo_volumetria',
-        'meses_volumetria_calendario',
-        'meses_volumetria_corte'
+        '_cache_sidebar_base', '_ultimo_tipo_volumetria',
+        'meses_volumetria_calendario', 'meses_volumetria_corte'
     ]:
         st.session_state.pop(chave, None)
-
     for col in ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']:
         st.session_state.pop(f'filtro_sidebar_{col}', None)
-
-    st.session_state['_forcou_atualizacao_base_sf'] = True
     st.rerun()
 
 # =============================
@@ -204,10 +193,8 @@ if st.button("🔄 Atualizar dados"):
 # =============================
 
 
-@st.cache_data(show_spinner="Carregando base atualizada...")
-def load_data(path, data_modificacao):
-    # data_modificacao entra na chave do cache.
-    # Quando o arquivo XLSB for atualizado no GitHub/Streamlit, o cache é invalidado automaticamente.
+@st.cache_data
+def load_data(path):
     # =============================
     # LEITURA ESTÁVEL DA BASE PRINCIPAL (mantém o comportamento original)
     # =============================
@@ -469,504 +456,11 @@ if not os.path.exists(caminho_arquivo):
     st.stop()
 
 try:
-    data_modificacao_base = os.path.getmtime(caminho_arquivo)
-    df = load_data(caminho_arquivo, data_modificacao_base)
+    df = load_data(caminho_arquivo)
 except Exception as e:
     st.error(f"Erro ao carregar a base: {e}")
     st.stop()
 
-if st.session_state.pop('_forcou_atualizacao_base_sf', False):
-    try:
-        st.toast('Base atualizada.', icon='✅')
-    except Exception:
-        st.caption('✅ Base atualizada.')
-
-
-# =============================
-# IDENTIFICAÇÃO DO USUÁRIO + DASHBOARD DE ACESSOS
-# INDICADOR: SEPARAÇÃO E FATURAMENTO
-# =============================
-# Persistência do histórico:
-# - Com GitHub configurado em secrets, o GitHub vira a fonte principal do histórico.
-# - Sem GitHub, o app mantém CSV/Excel local como backup.
-
-LOG_ACESSOS_SF_CSV = "log_separacao_faturamento_acessos.csv"
-LOG_ACESSOS_SF_XLSX = "log_separacao_faturamento_acessos.xlsx"
-FUSO_HORARIO_LOG = "America/Sao_Paulo"
-SENHA_DASHBOARD_ACESSOS = "admin"
-ADMIN_LOG_USUARIO = "admin"
-ADMIN_LOG_SENHA = "admin"
-COLUNAS_LOG_SF = ["ID", "Usuario", "Data", "Indicador", "Visualizacao", "Detalhe"]
-COLUNAS_EXIBICAO_LOG_SF = ["Usuario", "Data", "Indicador", "Visualizacao", "Detalhe"]
-
-# Defaults deste indicador no GitHub.
-# Assim, no Streamlit Secrets fica obrigatório apenas configurar o token.
-GITHUB_REPO_PADRAO_SF = "TorredaLogistica/dashboard-sla_separacao_faturamento"
-GITHUB_BRANCH_PADRAO_SF = "main"
-GITHUB_LOG_PATH_PADRAO_SF = LOG_ACESSOS_SF_CSV
-
-
-def _get_config_sf(nome: str, padrao: str = "") -> str:
-    try:
-        valor = st.secrets.get(nome, "")
-        if valor:
-            return str(valor)
-    except Exception:
-        pass
-    return str(os.getenv(nome, padrao) or padrao)
-
-
-def github_sf_configurado() -> bool:
-    return bool(_get_config_sf("GITHUB_TOKEN") and _get_config_sf("GITHUB_REPO"))
-
-
-def _github_sf_info() -> dict:
-    return {
-        "token": _get_config_sf("GITHUB_TOKEN"),
-        "repo": _get_config_sf("GITHUB_REPO", GITHUB_REPO_PADRAO_SF),
-        "branch": _get_config_sf("GITHUB_BRANCH", GITHUB_BRANCH_PADRAO_SF),
-        "path": _get_config_sf("GITHUB_LOG_SF_PATH", GITHUB_LOG_PATH_PADRAO_SF),
-    }
-
-
-def _limpar_nome_visualizacao(aba_atual: str) -> str:
-    mapa = {
-        "📅 Visão Diária": "Visão Diária",
-        "📊 Evolução Mensal": "Evolução Mensal",
-        "📦 Volumetria de Pedidos": "Volumetria de Pedidos",
-        "📊 Dashboard de Acessos": "Dashboard de Acessos",
-        "Entrada no Indicador": "Entrada no Indicador",
-    }
-    return mapa.get(str(aba_atual), str(aba_atual))
-
-
-def obter_usuario_logado_sf() -> str:
-    usuario = str(st.session_state.get("usuario_logado_sf", "")).strip()
-    return usuario if usuario else "Usuário"
-
-
-def _gerar_id_log_sf(usuario: str, data, indicador: str, visualizacao: str, detalhe: str) -> str:
-    try:
-        data_txt = pd.to_datetime(data, errors="coerce").strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        data_txt = str(data)
-    chave = f"{usuario}|{data_txt}|{indicador}|{visualizacao}|{detalhe}"
-    return hashlib.sha256(chave.encode("utf-8")).hexdigest()[:16]
-
-
-def _normalizar_log_sf(df_log: pd.DataFrame) -> pd.DataFrame:
-    if df_log is None or df_log.empty:
-        return pd.DataFrame(columns=COLUNAS_LOG_SF)
-
-    df_log = df_log.copy()
-    for col in COLUNAS_LOG_SF:
-        if col not in df_log.columns:
-            df_log[col] = "" if col != "Data" else pd.NaT
-
-    df_log = df_log[COLUNAS_LOG_SF].copy()
-    df_log["Usuario"] = df_log["Usuario"].fillna("Usuário").astype(str).str.strip().replace("", "Usuário")
-    df_log["Indicador"] = df_log["Indicador"].fillna("Separação e Faturamento").astype(str).str.strip().replace("", "Separação e Faturamento")
-    df_log["Visualizacao"] = df_log["Visualizacao"].fillna("Não informado").astype(str).str.strip().replace("", "Não informado")
-    df_log["Detalhe"] = df_log["Detalhe"].fillna("").astype(str).str.strip()
-    df_log["Data"] = pd.to_datetime(df_log["Data"], errors="coerce", dayfirst=True)
-    df_log = df_log.dropna(subset=["Data"]).copy()
-
-    if df_log.empty:
-        return pd.DataFrame(columns=COLUNAS_LOG_SF)
-
-    df_log["Data"] = df_log["Data"].dt.floor("s")
-    mask_id_vazio = df_log["ID"].fillna("").astype(str).str.strip().eq("")
-    if mask_id_vazio.any():
-        df_log.loc[mask_id_vazio, "ID"] = df_log.loc[mask_id_vazio].apply(
-            lambda r: _gerar_id_log_sf(r["Usuario"], r["Data"], r["Indicador"], r["Visualizacao"], r["Detalhe"]),
-            axis=1
-        )
-
-    df_log = df_log.drop_duplicates(subset=["ID"], keep="first")
-    df_log = df_log.drop_duplicates(subset=COLUNAS_EXIBICAO_LOG_SF, keep="first")
-    df_log = df_log.sort_values("Data", ascending=True).reset_index(drop=True)
-    return df_log
-
-
-def _df_log_sf_para_csv_bytes(df_log: pd.DataFrame) -> bytes:
-    df_log = _normalizar_log_sf(df_log)
-    df_csv = df_log.copy()
-    if not df_csv.empty:
-        df_csv["Data"] = df_csv["Data"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    return df_csv.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
-
-
-def _csv_bytes_para_log_sf(conteudo: bytes) -> pd.DataFrame:
-    if not conteudo:
-        return pd.DataFrame(columns=COLUNAS_LOG_SF)
-    try:
-        return _normalizar_log_sf(pd.read_csv(io.BytesIO(conteudo), sep=";", encoding="utf-8-sig"))
-    except Exception:
-        return pd.DataFrame(columns=COLUNAS_LOG_SF)
-
-
-def _github_headers_sf() -> dict:
-    """Monta headers do GitHub sem expor token em tela."""
-    cfg = _github_sf_info()
-    return {
-        "Authorization": f"Bearer {cfg['token']}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-
-def _github_ler_log_sf() -> tuple[pd.DataFrame, str | None]:
-    """Lê o log persistente no GitHub.
-
-    Ajuste aplicado:
-    - Nunca derruba o app se GitHub/API/Internet falhar.
-    - Timeout menor para evitar app travado.
-    - Retorna dataframe vazio + sha None em qualquer falha controlada.
-    """
-    if not github_sf_configurado():
-        return pd.DataFrame(columns=COLUNAS_LOG_SF), None
-
-    try:
-        import requests
-        cfg = _github_sf_info()
-        url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['path']}"
-        resp = requests.get(url, headers=_github_headers_sf(), params={"ref": cfg["branch"]}, timeout=3)
-
-        if resp.status_code == 404:
-            return pd.DataFrame(columns=COLUNAS_LOG_SF), None
-
-        if resp.status_code in (401, 403):
-            # Token sem permissão, expirado ou limite de API. Não interrompe o dashboard.
-            st.session_state["_aviso_log_sf"] = "GitHub não autorizou a leitura do log. Verifique GITHUB_TOKEN/GITHUB_REPO."
-            return pd.DataFrame(columns=COLUNAS_LOG_SF), None
-
-        resp.raise_for_status()
-        dados = resp.json()
-        conteudo_b64 = dados.get("content", "") or ""
-        sha = dados.get("sha")
-        conteudo = base64.b64decode(conteudo_b64)
-        return _csv_bytes_para_log_sf(conteudo), sha
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada ao ler log no GitHub: {type(e).__name__}"
-        return pd.DataFrame(columns=COLUNAS_LOG_SF), None
-
-
-def _github_salvar_log_sf(df_log: pd.DataFrame, mensagem: str = "Atualiza log Separação e Faturamento") -> bool:
-    """Salva o log no GitHub de forma segura.
-
-    Ajuste aplicado para evitar o erro do print 1:
-    - Não deixa exception de rede/API derrubar o app.
-    - Antes de salvar, sempre relê o GitHub e faz merge com o log local.
-    - Em conflito 409, tenta novamente com o novo SHA.
-    - Retorna False se falhar, mantendo o app aberto e usando backup local.
-    """
-    if not github_sf_configurado():
-        return False
-
-    try:
-        import requests
-        cfg = _github_sf_info()
-        url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['path']}"
-
-        df_local = _normalizar_log_sf(df_log)
-        df_remoto, sha_atual = _github_ler_log_sf()
-        df_final = _normalizar_log_sf(pd.concat([df_remoto, df_local], ignore_index=True))
-
-        payload = {
-            "message": mensagem,
-            "content": base64.b64encode(_df_log_sf_para_csv_bytes(df_final)).decode("utf-8"),
-            "branch": cfg["branch"],
-        }
-        if sha_atual:
-            payload["sha"] = sha_atual
-
-        for tentativa in range(2):
-            resp = requests.put(url, headers=_github_headers_sf(), json=payload, timeout=5)
-
-            if resp.status_code == 409 and tentativa == 0:
-                # Outro acesso gravou ao mesmo tempo. Relê, junta tudo e tenta mais uma vez.
-                df_remoto_2, sha_novo = _github_ler_log_sf()
-                df_final = _normalizar_log_sf(pd.concat([df_remoto_2, df_final], ignore_index=True))
-                payload["content"] = base64.b64encode(_df_log_sf_para_csv_bytes(df_final)).decode("utf-8")
-                if sha_novo:
-                    payload["sha"] = sha_novo
-                continue
-
-            if resp.status_code in (401, 403):
-                st.session_state["_aviso_log_sf"] = "GitHub não autorizou a gravação do log. Verifique permissões do token."
-                return False
-
-            resp.raise_for_status()
-            return True
-
-        return False
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada ao salvar log no GitHub: {type(e).__name__}"
-        return False
-
-
-def _ler_log_sf_local() -> pd.DataFrame:
-    try:
-        if os.path.exists(LOG_ACESSOS_SF_CSV):
-            try:
-                return _normalizar_log_sf(pd.read_csv(LOG_ACESSOS_SF_CSV, sep=";", encoding="utf-8-sig"))
-            except Exception:
-                pass
-        if os.path.exists(LOG_ACESSOS_SF_XLSX):
-            try:
-                return _normalizar_log_sf(pd.read_excel(LOG_ACESSOS_SF_XLSX, engine="openpyxl"))
-            except Exception:
-                pass
-    except Exception:
-        pass
-    return pd.DataFrame(columns=COLUNAS_LOG_SF)
-
-
-def salvar_log_sf_local(df_log: pd.DataFrame):
-    """Backup local. No Streamlit Cloud esse arquivo pode sumir no reboot; GitHub é o histórico definitivo."""
-    try:
-        df_log = _normalizar_log_sf(df_log)
-        Path(LOG_ACESSOS_SF_CSV).write_bytes(_df_log_sf_para_csv_bytes(df_log))
-        try:
-            df_log.to_excel(LOG_ACESSOS_SF_XLSX, index=False, engine="openpyxl")
-        except Exception:
-            pass
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada no backup local do log: {type(e).__name__}"
-
-
-def carregar_log_sf(sincronizar_github: bool = False) -> pd.DataFrame:
-    """Carrega log de forma rápida.
-
-    Padrão de performance:
-    - No uso normal do indicador, lê apenas o CSV local do app.
-    - Só consulta o GitHub quando sincronizar_github=True, evitando lentidão e erro de conexão a cada rerun.
-    """
-    try:
-        df_local = _ler_log_sf_local()
-
-        if sincronizar_github and github_sf_configurado():
-            df_github, _sha = _github_ler_log_sf()
-            df_final = _normalizar_log_sf(pd.concat([df_github, df_local], ignore_index=True))
-            salvar_log_sf_local(df_final)
-            return df_final
-
-        return df_local
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada ao carregar log: {type(e).__name__}"
-        return _ler_log_sf_local()
-
-def salvar_log_sf(df_log: pd.DataFrame, mensagem_github: str = "Atualiza log Separação e Faturamento", sincronizar_github: bool = False):
-    """Salva log de forma rápida.
-
-    Para evitar lentidão/conexão no Streamlit, o uso normal salva apenas no arquivo local.
-    A sincronização com GitHub fica opcional e deve ser chamada apenas quando necessário.
-    """
-    try:
-        df_log = _normalizar_log_sf(df_log)
-        salvar_log_sf_local(df_log)
-
-        if sincronizar_github and github_sf_configurado():
-            ok = _github_salvar_log_sf(df_log, mensagem_github)
-            if ok:
-                st.session_state["_log_sf_pendente_sync"] = False
-            else:
-                st.session_state["_log_sf_pendente_sync"] = True
-        elif github_sf_configurado():
-            st.session_state["_log_sf_pendente_sync"] = True
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada ao salvar log: {type(e).__name__}"
-
-
-def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização", usuario: str | None = None):
-    """Registra acesso sem deixar falha de log quebrar todo o app."""
-    try:
-        visualizacao = _limpar_nome_visualizacao(visualizacao)
-        usuario = (usuario or obter_usuario_logado_sf()).strip() or "Usuário"
-        detalhe = (detalhe or "").strip()
-        indicador = "Separação e Faturamento"
-        data_hora_sp = datetime.now(ZoneInfo(FUSO_HORARIO_LOG)).replace(tzinfo=None).replace(microsecond=0)
-
-        # Evita duplicidade em reruns muito próximos, mas sem bloquear novos acessos futuros.
-        chave_evento = f"{usuario}|{indicador}|{visualizacao}|{detalhe}"
-        ultimo = st.session_state.get("_ultimo_log_sf_evento", {})
-        if ultimo.get("chave") == chave_evento:
-            try:
-                segundos = (data_hora_sp - ultimo.get("data")).total_seconds()
-                if 0 <= segundos <= 3:
-                    return
-            except Exception:
-                pass
-
-        novo = pd.DataFrame([{
-            "ID": _gerar_id_log_sf(usuario, data_hora_sp, indicador, visualizacao, detalhe),
-            "Usuario": usuario,
-            "Data": data_hora_sp,
-            "Indicador": indicador,
-            "Visualizacao": visualizacao,
-            "Detalhe": detalhe,
-        }])
-
-        base = carregar_log_sf()
-        base = _normalizar_log_sf(pd.concat([base, novo], ignore_index=True))
-        salvar_log_sf(base, "Registra acesso no indicador Separação e Faturamento")
-        st.session_state["_ultimo_log_sf_evento"] = {"chave": chave_evento, "data": data_hora_sp}
-    except Exception as e:
-        # Importante: nunca usar algo que possa quebrar dentro do except.
-        st.session_state["_aviso_log_sf"] = f"Não foi possível registrar o acesso: {type(e).__name__}"
-
-def registrar_visualizacao_sf(aba_atual: str):
-    visualizacao = _limpar_nome_visualizacao(aba_atual)
-    usuario = obter_usuario_logado_sf()
-    chave = f"view|{usuario}|{visualizacao}"
-    if st.session_state.get("_ultima_visualizacao_sf_logada") != chave:
-        registrar_log_sf(visualizacao, "Acesso à visualização", usuario=usuario)
-        st.session_state["_ultima_visualizacao_sf_logada"] = chave
-
-
-def apagar_logs_sf() -> bool:
-    try:
-        vazio = pd.DataFrame(columns=COLUNAS_LOG_SF)
-        salvar_log_sf(vazio, "Apaga histórico do indicador Separação e Faturamento", sincronizar_github=True)
-        st.session_state["_ultimo_log_sf_evento"] = {}
-        st.session_state["_ultima_visualizacao_sf_logada"] = None
-        return True
-    except Exception:
-        return False
-
-
-def render_identificacao_usuario_sf():
-    st.markdown("## 🔐 Identificação de acesso")
-    st.info("Para acessar o indicador de Separação e Faturamento, informe seu nome de usuário.")
-    nome_digitado = st.text_input("Nome do usuário", key="input_usuario_logado_sf")
-    if st.button("Acessar indicador", use_container_width=True):
-        nome_digitado = (nome_digitado or "").strip()
-        if not nome_digitado:
-            st.error("Informe o nome do usuário para continuar.")
-            return
-        st.session_state.usuario_logado_sf = nome_digitado
-        st.session_state.acesso_sf_liberado = True
-        registrar_log_sf("Entrada no Indicador", "Acesso liberado ao indicador", usuario=nome_digitado)
-        st.rerun()
-
-
-def render_senha_dashboard_acessos_sf():
-    st.markdown("## 🔐 Acesso restrito")
-    st.info("Informe a senha para acessar o Dashboard de Acessos.")
-    senha_digitada = st.text_input("Senha", type="password", key="senha_dashboard_acessos_sf")
-    if st.button("Entrar", use_container_width=True):
-        if senha_digitada == SENHA_DASHBOARD_ACESSOS:
-            st.session_state.dashboard_acessos_sf_autenticado = True
-            registrar_log_sf("Dashboard de Acessos", "Acesso autorizado", usuario=obter_usuario_logado_sf())
-            st.rerun()
-        else:
-            st.error("Senha incorreta. Tente novamente.")
-
-
-def render_dashboard_acessos_sf():
-    st.subheader("📊 Dashboard de Acessos")
-    if st.session_state.get("_aviso_log_sf"):
-        st.warning(st.session_state.get("_aviso_log_sf"))
-    if st.session_state.get("_log_sf_pendente_sync"):
-        st.info("Existe log salvo no backup local aguardando sincronização com GitHub.")
-    st.caption("Histórico de acessos das visualizações do indicador Separação e Faturamento.")
-    fonte_log = "arquivo local rápido"
-    if github_sf_configurado():
-        fonte_log += " | GitHub disponível para sincronização manual"
-    st.caption(f"Fonte do histórico: {fonte_log}")
-
-    sincronizar_agora = False
-    if github_sf_configurado():
-        sincronizar_agora = st.button("🔄 Sincronizar log com GitHub agora", use_container_width=True)
-        if sincronizar_agora:
-            st.info("Sincronizando histórico com GitHub. Aguarde alguns segundos...")
-
-    df_log = carregar_log_sf(sincronizar_github=sincronizar_agora)
-
-    if sincronizar_agora and not df_log.empty:
-        salvar_log_sf(df_log, "Sincroniza histórico Separação e Faturamento", sincronizar_github=True)
-        try:
-            st.toast("Log sincronizado com GitHub.", icon="✅")
-        except Exception:
-            st.success("Log sincronizado com GitHub.")
-    if df_log.empty:
-        st.warning("Ainda não há registros de acessos para este indicador.")
-        return
-    df_log = df_log.dropna(subset=["Data"]).copy()
-    if df_log.empty:
-        st.warning("O arquivo de log existe, mas ainda não possui datas válidas.")
-        return
-
-    data_min = df_log["Data"].min().date()
-    data_max = df_log["Data"].max().date()
-
-    st.markdown("### 🔎 Filtros")
-    col_dt_ini, col_dt_fim = st.columns(2)
-    data_inicio = col_dt_ini.date_input("Data início", value=data_min, min_value=data_min, max_value=data_max, format="DD/MM/YYYY", key="sf_log_data_inicio")
-    data_fim = col_dt_fim.date_input("Data fim", value=data_max, min_value=data_min, max_value=data_max, format="DD/MM/YYYY", key="sf_log_data_fim")
-
-    inicio = pd.to_datetime(data_inicio)
-    fim = pd.to_datetime(data_fim) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-    df_filtrado = df_log[(df_log["Data"] >= inicio) & (df_log["Data"] <= fim)].copy()
-
-    if df_filtrado.empty:
-        st.info("Não há acessos registrados para o período selecionado.")
-    else:
-        total_acessos = len(df_filtrado)
-        usuarios_unicos = df_filtrado["Usuario"].nunique()
-        indicadores_acessados = df_filtrado["Indicador"].nunique()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total de acessos", f"{total_acessos:,}".replace(",", "."))
-        c2.metric("Usuários únicos", f"{usuarios_unicos:,}".replace(",", "."))
-        c3.metric("Indicadores acessados", f"{indicadores_acessados:,}".replace(",", "."))
-        st.caption(f"Histórico carregado de {data_inicio.strftime('%d/%m/%Y')} até {data_fim.strftime('%d/%m/%Y')}.")
-
-        st.markdown("### 👤 Acessos por usuário")
-        ranking_usuario = df_filtrado["Usuario"].fillna("Usuário").value_counts().reset_index()
-        ranking_usuario.columns = ["Usuário", "Qtd Acessos"]
-        st.dataframe(ranking_usuario, use_container_width=True, hide_index=True)
-        st.bar_chart(ranking_usuario.set_index("Usuário"))
-
-        st.markdown("### 📌 Acessos por visualização")
-        ranking_visualizacao = df_filtrado["Visualizacao"].fillna("Não informado").value_counts().reset_index()
-        ranking_visualizacao.columns = ["Visualização", "Qtd Acessos"]
-        st.dataframe(ranking_visualizacao, use_container_width=True, hide_index=True)
-        st.bar_chart(ranking_visualizacao.set_index("Visualização"))
-
-        st.markdown("### 📅 Acessos por dia")
-        acessos_dia = df_filtrado.copy()
-        acessos_dia["Dia"] = acessos_dia["Data"].dt.date
-        acessos_dia = acessos_dia.groupby("Dia").size().reset_index(name="Qtd Acessos")
-        st.line_chart(acessos_dia.set_index("Dia"))
-
-        st.markdown("### 🕒 Últimos acessos")
-        ultimos = df_filtrado.sort_values("Data", ascending=False).copy()
-        ultimos = ultimos[COLUNAS_EXIBICAO_LOG_SF].copy()
-        ultimos["Data"] = ultimos["Data"].dt.strftime("%d/%m/%Y %H:%M:%S")
-        st.dataframe(ultimos, use_container_width=True, hide_index=True)
-
-        csv_download = ultimos.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("⬇️ Baixar histórico filtrado em CSV", data=csv_download, file_name=LOG_ACESSOS_SF_CSV, mime="text/csv", use_container_width=True)
-
-    if os.path.exists(LOG_ACESSOS_SF_XLSX):
-        with open(LOG_ACESSOS_SF_XLSX, "rb") as f:
-            st.download_button("⬇️ Baixar histórico completo em Excel", data=f, file_name=LOG_ACESSOS_SF_XLSX, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
-    st.markdown("---")
-    with st.expander("🛡️ Administração do log - apagar registros"):
-        st.warning("Atenção: esta ação apaga todos os registros de acessos deste indicador.")
-        usuario_admin = st.text_input("Usuário administrador", key="usuario_admin_log_sf")
-        senha_admin = st.text_input("Senha administrador", type="password", key="senha_admin_log_sf")
-        confirmar = st.checkbox("Confirmo que desejo apagar todos os registros", key="confirmar_apagar_log_sf")
-        if st.button("🗑️ Apagar todos os registros", use_container_width=True):
-            if usuario_admin == ADMIN_LOG_USUARIO and senha_admin == ADMIN_LOG_SENHA and confirmar:
-                if apagar_logs_sf():
-                    st.success("Registros apagados com sucesso.")
-                    st.rerun()
-                else:
-                    st.error("Não foi possível apagar os registros.")
-            else:
-                st.error("Usuário/senha inválidos ou confirmação não marcada.")
 
 def _montar_cache_sidebar(df_base, filtros_cols):
     """Pré-calcula opções da sidebar para evitar recomputações custosas a cada rerun."""
@@ -993,19 +487,6 @@ def _montar_cache_sidebar(df_base, filtros_cols):
         'opcoes_filtros': opcoes_filtros,
     }
 
-if 'dashboard_acessos_sf_autenticado' not in st.session_state:
-    st.session_state.dashboard_acessos_sf_autenticado = False
-if 'usuario_logado_sf' not in st.session_state:
-    st.session_state.usuario_logado_sf = ''
-if 'acesso_sf_liberado' not in st.session_state:
-    st.session_state.acesso_sf_liberado = False
-
-if not st.session_state.acesso_sf_liberado or not str(st.session_state.usuario_logado_sf).strip():
-    render_identificacao_usuario_sf()
-    st.stop()
-
-st.caption(f"Usuário logado: {obter_usuario_logado_sf()}")
-
 # =============================
 # SIDEBAR
 # =============================
@@ -1024,71 +505,83 @@ with st.sidebar:
         st.session_state['_cache_sidebar_base'] = _montar_cache_sidebar(df, filtros)
     cache_sidebar = st.session_state['_cache_sidebar_base']
 
-    aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos", "📊 Dashboard de Acessos"], horizontal=True)
+    aba = st.radio("Visualização", ["📅 Visão Diária", "📊 Evolução Mensal", "📦 Volumetria de Pedidos"], horizontal=True)
     lista_meses = cache_sidebar['lista_meses']
 
     tipo_volumetria = "Calendário (Data NF)"
     meses_selecionados = []
-    mes_selecionado = lista_meses[0] if lista_meses else None
+
+    if '_ultimo_tipo_volumetria' not in st.session_state:
+        st.session_state['_ultimo_tipo_volumetria'] = None
+    if 'meses_volumetria_calendario' not in st.session_state:
+        st.session_state['meses_volumetria_calendario'] = []
+    if 'meses_volumetria_corte' not in st.session_state:
+        st.session_state['meses_volumetria_corte'] = []
+
+    if aba == "📦 Volumetria de Pedidos":
+        tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False, key='tipo_periodo_volumetria')
+        mudou_tipo_volumetria = st.session_state.get('_ultimo_tipo_volumetria') != tipo_volumetria
+        lista_meses_corte = cache_sidebar['lista_meses_corte']
+
+        if tipo_volumetria == "Calendário (Data NF)":
+            if mudou_tipo_volumetria or not st.session_state['meses_volumetria_calendario']:
+                st.session_state['meses_volumetria_calendario'] = [lista_meses[0]] if lista_meses else []
+            meses_selecionados = st.multiselect(
+                "Mês de Referência",
+                lista_meses,
+                key='meses_volumetria_calendario'
+            )
+        else:
+            if mudou_tipo_volumetria or not st.session_state['meses_volumetria_corte']:
+                st.session_state['meses_volumetria_corte'] = [lista_meses_corte[0]] if lista_meses_corte else []
+            meses_selecionados = st.multiselect(
+                "Mês de Corte da Fatura",
+                lista_meses_corte,
+                key='meses_volumetria_corte'
+            )
+            if not lista_meses_corte:
+                st.caption("⚠️ Não foi possível detectar automaticamente a aba de cortes neste arquivo.")
+                abas_detectadas = df.attrs.get('abas_encontradas', '')
+                aba_corte = df.attrs.get('aba_corte_detectada', '')
+                fonte_corte = df.attrs.get('fonte_corte', '')
+                erro_corte = df.attrs.get('erro_corte', '')
+                if abas_detectadas:
+                    st.caption(f"Abas detectadas no arquivo principal: {abas_detectadas}")
+                if aba_corte:
+                    st.caption(f"Aba de corte identificada: {aba_corte}")
+                if fonte_corte:
+                    st.caption(f"Fonte utilizada para corte: {fonte_corte}")
+                if erro_corte:
+                    st.caption(f"Detalhe: {erro_corte}")
+                st.caption("Se o arquivo em produção tiver somente a Planilha1, publique um arquivo auxiliar com as datas de corte, por exemplo: datas_corte_fatura.xlsx")
+
+        if mudou_tipo_volumetria:
+            for col in filtros:
+                chave_filtro = f'filtro_sidebar_{col}'
+                if chave_filtro in st.session_state:
+                    st.session_state[chave_filtro] = []
+
+        st.session_state['_ultimo_tipo_volumetria'] = tipo_volumetria
+        mes_selecionado = meses_selecionados[0] if meses_selecionados else None
+    else:
+        mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
+        meses_selecionados = [mes_selecionado] if mes_selecionado else []
+
     mask = np.ones(len(df), dtype=bool)
     filtros_selecionados = {}
+    opcoes_filtros = cache_sidebar['opcoes_filtros']
 
-    if aba != "📊 Dashboard de Acessos":
-        if '_ultimo_tipo_volumetria' not in st.session_state:
-            st.session_state['_ultimo_tipo_volumetria'] = None
-        if 'meses_volumetria_calendario' not in st.session_state:
-            st.session_state['meses_volumetria_calendario'] = []
-        if 'meses_volumetria_corte' not in st.session_state:
-            st.session_state['meses_volumetria_corte'] = []
-
-        if aba == "📦 Volumetria de Pedidos":
-            tipo_volumetria = st.radio("Tipo de Período", ["Calendário (Data NF)", "Corte de Fatura"], horizontal=False, key='tipo_periodo_volumetria')
-            mudou_tipo_volumetria = st.session_state.get('_ultimo_tipo_volumetria') != tipo_volumetria
-            lista_meses_corte = cache_sidebar['lista_meses_corte']
-            if tipo_volumetria == "Calendário (Data NF)":
-                if mudou_tipo_volumetria or not st.session_state['meses_volumetria_calendario']:
-                    st.session_state['meses_volumetria_calendario'] = [lista_meses[0]] if lista_meses else []
-                meses_selecionados = st.multiselect("Mês de Referência", lista_meses, key='meses_volumetria_calendario')
-            else:
-                if mudou_tipo_volumetria or not st.session_state['meses_volumetria_corte']:
-                    st.session_state['meses_volumetria_corte'] = [lista_meses_corte[0]] if lista_meses_corte else []
-                meses_selecionados = st.multiselect("Mês de Corte da Fatura", lista_meses_corte, key='meses_volumetria_corte')
-                if not lista_meses_corte:
-                    st.caption("⚠️ Não foi possível detectar automaticamente a aba de cortes neste arquivo.")
-            if mudou_tipo_volumetria:
-                for col in filtros:
-                    chave_filtro = f'filtro_sidebar_{col}'
-                    if chave_filtro in st.session_state:
-                        st.session_state[chave_filtro] = []
-            st.session_state['_ultimo_tipo_volumetria'] = tipo_volumetria
-            mes_selecionado = meses_selecionados[0] if meses_selecionados else None
-        else:
-            mes_selecionado = st.selectbox("Mês de Referência", lista_meses)
-            meses_selecionados = [mes_selecionado] if mes_selecionado else []
-
-        opcoes_filtros = cache_sidebar['opcoes_filtros']
-        for col in filtros:
-            if col in df.columns:
-                chave_filtro = f'filtro_sidebar_{col}'
-                if chave_filtro not in st.session_state:
-                    st.session_state[chave_filtro] = []
-                vals = st.multiselect(col, opcoes_filtros.get(col, []), key=chave_filtro)
-                filtros_selecionados[col] = vals
-                if vals:
-                    mask &= df[col].isin(vals)
+    for col in filtros:
+        if col in df.columns:
+            chave_filtro = f'filtro_sidebar_{col}'
+            if chave_filtro not in st.session_state:
+                st.session_state[chave_filtro] = []
+            vals = st.multiselect(col, opcoes_filtros.get(col, []), key=chave_filtro)
+            filtros_selecionados[col] = vals
+            if vals:
+                mask &= df[col].isin(vals)
 dff_global = df[mask].copy()
 empresas_filtradas = filtros_selecionados.get('Empresa', [])
-
-if aba != "📊 Dashboard de Acessos":
-    st.session_state.dashboard_acessos_sf_autenticado = False
-    registrar_visualizacao_sf(aba)
-
-if aba == "📊 Dashboard de Acessos":
-    if not st.session_state.dashboard_acessos_sf_autenticado:
-        render_senha_dashboard_acessos_sf()
-    else:
-        render_dashboard_acessos_sf()
-    st.stop()
 
 
 
