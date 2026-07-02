@@ -181,16 +181,21 @@ def normalizar_pedido(serie: pd.Series) -> pd.Series:
 
     return s.replace({'nan': '', 'None': '', '<NA>': ''})
 
-# 🔥 BOTÃO DE ATUALIZAÇÃO (COLOCA AQUI)
+# 🔥 BOTÃO DE ATUALIZAÇÃO RÁPIDA
+# Não usa st.cache_data.clear() para não deixar o painel lento.
+# A base principal já atualiza automaticamente quando o arquivo XLSB muda,
+# pois a função load_data recebe a data de modificação do arquivo.
 if st.button("🔄 Atualizar dados"):
-    st.cache_data.clear()
     for chave in [
-        '_cache_sidebar_base', '_ultimo_tipo_volumetria',
-        'meses_volumetria_calendario', 'meses_volumetria_corte'
+        '_ultimo_tipo_volumetria',
+        'meses_volumetria_calendario',
+        'meses_volumetria_corte'
     ]:
         st.session_state.pop(chave, None)
+
     for col in ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']:
         st.session_state.pop(f'filtro_sidebar_{col}', None)
+
     st.session_state['_forcou_atualizacao_base_sf'] = True
     st.rerun()
 
@@ -471,7 +476,10 @@ except Exception as e:
     st.stop()
 
 if st.session_state.pop('_forcou_atualizacao_base_sf', False):
-    st.success('Base recarregada com sucesso.')
+    try:
+        st.toast('Base atualizada.', icon='✅')
+    except Exception:
+        st.caption('✅ Base atualizada.')
 
 
 # =============================
