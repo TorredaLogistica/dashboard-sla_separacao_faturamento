@@ -181,22 +181,16 @@ def normalizar_pedido(serie: pd.Series) -> pd.Series:
 
     return s.replace({'nan': '', 'None': '', '<NA>': ''})
 
-# 🔥 BOTÃO DE ATUALIZAÇÃO RÁPIDA
-# Não usa st.cache_data.clear() para não deixar o painel lento.
-# A base principal já atualiza automaticamente quando o arquivo XLSB muda,
-# pois a função load_data recebe a data de modificação do arquivo.
+# 🔥 BOTÃO DE ATUALIZAÇÃO (COLOCA AQUI)
 if st.button("🔄 Atualizar dados"):
+    st.cache_data.clear()
     for chave in [
-        '_ultimo_tipo_volumetria',
-        'meses_volumetria_calendario',
-        'meses_volumetria_corte'
+        '_cache_sidebar_base', '_ultimo_tipo_volumetria',
+        'meses_volumetria_calendario', 'meses_volumetria_corte'
     ]:
         st.session_state.pop(chave, None)
-
     for col in ['Operador','CD Origem','Empresa','Canal','Unidade de Negocio','Canal de Atuacao']:
         st.session_state.pop(f'filtro_sidebar_{col}', None)
-
-    st.session_state['_forcou_atualizacao_base_sf'] = True
     st.rerun()
 
 # =============================
@@ -204,10 +198,8 @@ if st.button("🔄 Atualizar dados"):
 # =============================
 
 
-@st.cache_data(show_spinner="Carregando base atualizada...")
-def load_data(path, data_modificacao):
-    # data_modificacao entra na chave do cache.
-    # Quando o arquivo XLSB for atualizado no GitHub/Streamlit, o cache é invalidado automaticamente.
+@st.cache_data
+def load_data(path):
     # =============================
     # LEITURA ESTÁVEL DA BASE PRINCIPAL (mantém o comportamento original)
     # =============================
@@ -469,17 +461,10 @@ if not os.path.exists(caminho_arquivo):
     st.stop()
 
 try:
-    data_modificacao_base = os.path.getmtime(caminho_arquivo)
-    df = load_data(caminho_arquivo, data_modificacao_base)
+    df = load_data(caminho_arquivo)
 except Exception as e:
     st.error(f"Erro ao carregar a base: {e}")
     st.stop()
-
-if st.session_state.pop('_forcou_atualizacao_base_sf', False):
-    try:
-        st.toast('Base atualizada.', icon='✅')
-    except Exception:
-        st.caption('✅ Base atualizada.')
 
 
 # =============================
@@ -499,12 +484,6 @@ ADMIN_LOG_SENHA = "admin"
 COLUNAS_LOG_SF = ["ID", "Usuario", "Data", "Indicador", "Visualizacao", "Detalhe"]
 COLUNAS_EXIBICAO_LOG_SF = ["Usuario", "Data", "Indicador", "Visualizacao", "Detalhe"]
 
-# Defaults deste indicador no GitHub.
-# Assim, no Streamlit Secrets fica obrigatório apenas configurar o token.
-GITHUB_REPO_PADRAO_SF = "TorredaLogistica/dashboard-sla_separacao_faturamento"
-GITHUB_BRANCH_PADRAO_SF = "main"
-GITHUB_LOG_PATH_PADRAO_SF = LOG_ACESSOS_SF_CSV
-
 
 def _get_config_sf(nome: str, padrao: str = "") -> str:
     try:
@@ -523,9 +502,9 @@ def github_sf_configurado() -> bool:
 def _github_sf_info() -> dict:
     return {
         "token": _get_config_sf("GITHUB_TOKEN"),
-        "repo": _get_config_sf("GITHUB_REPO", GITHUB_REPO_PADRAO_SF),
-        "branch": _get_config_sf("GITHUB_BRANCH", GITHUB_BRANCH_PADRAO_SF),
-        "path": _get_config_sf("GITHUB_LOG_SF_PATH", GITHUB_LOG_PATH_PADRAO_SF),
+        "repo": _get_config_sf("GITHUB_REPO"),
+        "branch": _get_config_sf("GITHUB_BRANCH", "main"),
+        "path": _get_config_sf("GITHUB_LOG_SF_PATH", LOG_ACESSOS_SF_CSV),
     }
 
 
@@ -605,24 +584,7 @@ def _csv_bytes_para_log_sf(conteudo: bytes) -> pd.DataFrame:
         return pd.DataFrame(columns=COLUNAS_LOG_SF)
 
 
-def _github_headers_sf() -> dict:
-    """Monta headers do GitHub sem expor token em tela."""
-    cfg = _github_sf_info()
-    return {
-        "Authorization": f"Bearer {cfg['token']}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-
 def _github_ler_log_sf() -> tuple[pd.DataFrame, str | None]:
-    """Lê o log persistente no GitHub.
-
-    Ajuste aplicado:
-    - Nunca derruba o app se GitHub/API/Internet falhar.
-    - Timeout menor para evitar app travado.
-    - Retorna dataframe vazio + sha None em qualquer falha controlada.
-    """
     if not github_sf_configurado():
         return pd.DataFrame(columns=COLUNAS_LOG_SF), None
 
@@ -630,36 +592,24 @@ def _github_ler_log_sf() -> tuple[pd.DataFrame, str | None]:
         import requests
         cfg = _github_sf_info()
         url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['path']}"
-        resp = requests.get(url, headers=_github_headers_sf(), params={"ref": cfg["branch"]}, timeout=8)
-
+        headers = {
+            "Authorization": f"Bearer {cfg['token']}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        resp = requests.get(url, headers=headers, params={"ref": cfg["branch"]}, timeout=15)
         if resp.status_code == 404:
             return pd.DataFrame(columns=COLUNAS_LOG_SF), None
-
-        if resp.status_code in (401, 403):
-            # Token sem permissão, expirado ou limite de API. Não interrompe o dashboard.
-            st.session_state["_aviso_log_sf"] = "GitHub não autorizou a leitura do log. Verifique GITHUB_TOKEN/GITHUB_REPO."
-            return pd.DataFrame(columns=COLUNAS_LOG_SF), None
-
         resp.raise_for_status()
         dados = resp.json()
-        conteudo_b64 = dados.get("content", "") or ""
+        conteudo = base64.b64decode(dados.get("content", ""))
         sha = dados.get("sha")
-        conteudo = base64.b64decode(conteudo_b64)
         return _csv_bytes_para_log_sf(conteudo), sha
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada ao ler log no GitHub: {type(e).__name__}"
+    except Exception:
         return pd.DataFrame(columns=COLUNAS_LOG_SF), None
 
 
 def _github_salvar_log_sf(df_log: pd.DataFrame, mensagem: str = "Atualiza log Separação e Faturamento") -> bool:
-    """Salva o log no GitHub de forma segura.
-
-    Ajuste aplicado para evitar o erro do print 1:
-    - Não deixa exception de rede/API derrubar o app.
-    - Antes de salvar, sempre relê o GitHub e faz merge com o log local.
-    - Em conflito 409, tenta novamente com o novo SHA.
-    - Retorna False se falhar, mantendo o app aberto e usando backup local.
-    """
     if not github_sf_configurado():
         return False
 
@@ -667,110 +617,80 @@ def _github_salvar_log_sf(df_log: pd.DataFrame, mensagem: str = "Atualiza log Se
         import requests
         cfg = _github_sf_info()
         url = f"https://api.github.com/repos/{cfg['repo']}/contents/{cfg['path']}"
-
-        df_local = _normalizar_log_sf(df_log)
-        df_remoto, sha_atual = _github_ler_log_sf()
-        df_final = _normalizar_log_sf(pd.concat([df_remoto, df_local], ignore_index=True))
-
+        headers = {
+            "Authorization": f"Bearer {cfg['token']}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        _, sha_atual = _github_ler_log_sf()
         payload = {
             "message": mensagem,
-            "content": base64.b64encode(_df_log_sf_para_csv_bytes(df_final)).decode("utf-8"),
+            "content": base64.b64encode(_df_log_sf_para_csv_bytes(df_log)).decode("utf-8"),
             "branch": cfg["branch"],
         }
         if sha_atual:
             payload["sha"] = sha_atual
 
-        for tentativa in range(2):
-            resp = requests.put(url, headers=_github_headers_sf(), json=payload, timeout=10)
-
-            if resp.status_code == 409 and tentativa == 0:
-                # Outro acesso gravou ao mesmo tempo. Relê, junta tudo e tenta mais uma vez.
-                df_remoto_2, sha_novo = _github_ler_log_sf()
-                df_final = _normalizar_log_sf(pd.concat([df_remoto_2, df_final], ignore_index=True))
-                payload["content"] = base64.b64encode(_df_log_sf_para_csv_bytes(df_final)).decode("utf-8")
-                if sha_novo:
-                    payload["sha"] = sha_novo
-                continue
-
-            if resp.status_code in (401, 403):
-                st.session_state["_aviso_log_sf"] = "GitHub não autorizou a gravação do log. Verifique permissões do token."
-                return False
-
-            resp.raise_for_status()
-            return True
-
-        return False
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada ao salvar log no GitHub: {type(e).__name__}"
+        resp = requests.put(url, headers=headers, json=payload, timeout=20)
+        if resp.status_code == 409:
+            df_remoto, sha_novo = _github_ler_log_sf()
+            df_final = _normalizar_log_sf(pd.concat([df_remoto, df_log], ignore_index=True))
+            payload["content"] = base64.b64encode(_df_log_sf_para_csv_bytes(df_final)).decode("utf-8")
+            if sha_novo:
+                payload["sha"] = sha_novo
+            resp = requests.put(url, headers=headers, json=payload, timeout=20)
+        resp.raise_for_status()
+        return True
+    except Exception:
         return False
 
 
 def _ler_log_sf_local() -> pd.DataFrame:
-    try:
-        if os.path.exists(LOG_ACESSOS_SF_CSV):
-            try:
-                return _normalizar_log_sf(pd.read_csv(LOG_ACESSOS_SF_CSV, sep=";", encoding="utf-8-sig"))
-            except Exception:
-                pass
-        if os.path.exists(LOG_ACESSOS_SF_XLSX):
-            try:
-                return _normalizar_log_sf(pd.read_excel(LOG_ACESSOS_SF_XLSX, engine="openpyxl"))
-            except Exception:
-                pass
-    except Exception:
-        pass
+    if os.path.exists(LOG_ACESSOS_SF_CSV):
+        try:
+            return _normalizar_log_sf(pd.read_csv(LOG_ACESSOS_SF_CSV, sep=";", encoding="utf-8-sig"))
+        except Exception:
+            pass
+    if os.path.exists(LOG_ACESSOS_SF_XLSX):
+        try:
+            return _normalizar_log_sf(pd.read_excel(LOG_ACESSOS_SF_XLSX, engine="openpyxl"))
+        except Exception:
+            pass
     return pd.DataFrame(columns=COLUNAS_LOG_SF)
 
 
 def salvar_log_sf_local(df_log: pd.DataFrame):
-    """Backup local. No Streamlit Cloud esse arquivo pode sumir no reboot; GitHub é o histórico definitivo."""
+    df_log = _normalizar_log_sf(df_log)
+    Path(LOG_ACESSOS_SF_CSV).write_bytes(_df_log_sf_para_csv_bytes(df_log))
     try:
-        df_log = _normalizar_log_sf(df_log)
-        Path(LOG_ACESSOS_SF_CSV).write_bytes(_df_log_sf_para_csv_bytes(df_log))
-        try:
-            df_log.to_excel(LOG_ACESSOS_SF_XLSX, index=False, engine="openpyxl")
-        except Exception:
-            pass
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada no backup local do log: {type(e).__name__}"
+        df_log.to_excel(LOG_ACESSOS_SF_XLSX, index=False, engine="openpyxl")
+    except Exception:
+        pass
 
 
 def carregar_log_sf() -> pd.DataFrame:
-    """Carrega histórico priorizando GitHub, com fallback local sem quebrar o app."""
-    try:
+    if github_sf_configurado():
+        df_github, _sha = _github_ler_log_sf()
+        if not df_github.empty:
+            salvar_log_sf_local(df_github)
+            return df_github
         df_local = _ler_log_sf_local()
-
-        if github_sf_configurado():
-            df_github, _sha = _github_ler_log_sf()
-            df_final = _normalizar_log_sf(pd.concat([df_github, df_local], ignore_index=True))
-            if not df_final.empty:
-                salvar_log_sf_local(df_final)
-                # Se existia algo só local, tenta subir para o GitHub sem travar o app.
-                _github_salvar_log_sf(df_final, "Sincroniza histórico Separação e Faturamento")
-                return df_final
-            return pd.DataFrame(columns=COLUNAS_LOG_SF)
-
-        return df_local
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada ao carregar log: {type(e).__name__}"
-        return _ler_log_sf_local()
+        if not df_local.empty:
+            _github_salvar_log_sf(df_local, "Migra histórico inicial Separação e Faturamento")
+            salvar_log_sf_local(df_local)
+            return df_local
+        return pd.DataFrame(columns=COLUNAS_LOG_SF)
+    return _ler_log_sf_local()
 
 
 def salvar_log_sf(df_log: pd.DataFrame, mensagem_github: str = "Atualiza log Separação e Faturamento"):
-    """Salva primeiro localmente e tenta persistir no GitHub sem derrubar o dashboard."""
-    try:
-        df_log = _normalizar_log_sf(df_log)
-        salvar_log_sf_local(df_log)
-        if github_sf_configurado():
-            ok = _github_salvar_log_sf(df_log, mensagem_github)
-            if not ok:
-                st.session_state["_log_sf_pendente_sync"] = True
-    except Exception as e:
-        st.session_state["_aviso_log_sf"] = f"Falha controlada ao salvar log: {type(e).__name__}"
+    df_log = _normalizar_log_sf(df_log)
+    salvar_log_sf_local(df_log)
+    if github_sf_configurado():
+        _github_salvar_log_sf(df_log, mensagem_github)
 
 
 def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização", usuario: str | None = None):
-    """Registra acesso sem deixar falha de log quebrar todo o app."""
     try:
         visualizacao = _limpar_nome_visualizacao(visualizacao)
         usuario = (usuario or obter_usuario_logado_sf()).strip() or "Usuário"
@@ -778,7 +698,6 @@ def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização
         indicador = "Separação e Faturamento"
         data_hora_sp = datetime.now(ZoneInfo(FUSO_HORARIO_LOG)).replace(tzinfo=None).replace(microsecond=0)
 
-        # Evita duplicidade em reruns muito próximos, mas sem bloquear novos acessos futuros.
         chave_evento = f"{usuario}|{indicador}|{visualizacao}|{detalhe}"
         ultimo = st.session_state.get("_ultimo_log_sf_evento", {})
         if ultimo.get("chave") == chave_evento:
@@ -797,14 +716,13 @@ def registrar_log_sf(visualizacao: str, detalhe: str = "Acesso à visualização
             "Visualizacao": visualizacao,
             "Detalhe": detalhe,
         }])
-
         base = carregar_log_sf()
-        base = _normalizar_log_sf(pd.concat([base, novo], ignore_index=True))
+        base = pd.concat([base, novo], ignore_index=True)
         salvar_log_sf(base, "Registra acesso no indicador Separação e Faturamento")
         st.session_state["_ultimo_log_sf_evento"] = {"chave": chave_evento, "data": data_hora_sp}
     except Exception as e:
-        # Importante: nunca usar algo que possa quebrar dentro do except.
-        st.session_state["_aviso_log_sf"] = f"Não foi possível registrar o acesso: {type(e).__name__}"
+        st.toast(f"Não foi possível registrar o acesso: {e}", icon="⚠️")
+
 
 def registrar_visualizacao_sf(aba_atual: str):
     visualizacao = _limpar_nome_visualizacao(aba_atual)
@@ -856,10 +774,6 @@ def render_senha_dashboard_acessos_sf():
 
 def render_dashboard_acessos_sf():
     st.subheader("📊 Dashboard de Acessos")
-    if st.session_state.get("_aviso_log_sf"):
-        st.warning(st.session_state.get("_aviso_log_sf"))
-    if st.session_state.get("_log_sf_pendente_sync"):
-        st.info("Existe log salvo no backup local aguardando sincronização com GitHub.")
     st.caption("Histórico de acessos das visualizações do indicador Separação e Faturamento.")
     fonte_log = "GitHub" if github_sf_configurado() else "arquivo local do app"
     st.caption(f"Fonte do histórico: {fonte_log}")
