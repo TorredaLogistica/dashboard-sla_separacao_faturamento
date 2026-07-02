@@ -98,6 +98,37 @@ def aplicar_estilo_plotly(fig, modo_mobile: bool = False):
     return fig
 st.set_page_config(layout="wide", page_title="Dashboard SLA Faturamento")
 
+
+# =============================
+# RECUPERAÇÃO CONTROLADA DO APP
+# =============================
+def reiniciar_sessao_streamlit_sf(motivo: str = ""):
+    """Reinicia a sessão do Streamlit com st.rerun().
+
+    Observação: isso não é o mesmo que o Reboot App do Streamlit Cloud.
+    O reboot real do Cloud precisa ser feito no painel Manage app.
+    """
+    try:
+        for chave in [
+            '_cache_sidebar_base', '_ultimo_tipo_volumetria',
+            'meses_volumetria_calendario', 'meses_volumetria_corte',
+            '_aviso_log_sf'
+        ]:
+            st.session_state.pop(chave, None)
+        st.session_state['_ultimo_reinicio_controlado_sf'] = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+        st.rerun()
+    except Exception:
+        st.stop()
+
+
+def mostrar_erro_controlado_sf(titulo: str, erro: Exception):
+    """Mostra erro tratado e oferece reinício de sessão sem derrubar o app."""
+    st.error(titulo)
+    st.caption(f"Detalhe técnico: {type(erro).__name__}")
+    if st.button("🔁 Reiniciar sessão do indicador", use_container_width=True):
+        reiniciar_sessao_streamlit_sf(str(erro))
+
+
 # =============================
 # CABEÇALHO (COM AJUSTE DE FUSO HORÁRIO)
 # =============================
@@ -916,9 +947,10 @@ def render_dashboard_acessos_sf():
     data_max = df_log["Data"].max().date()
 
     st.markdown("### 🔎 Filtros")
+    st.caption("Formato das datas: dd/mm/aaaa")
     col_dt_ini, col_dt_fim = st.columns(2)
-    data_inicio = col_dt_ini.date_input("Data início", value=data_min, min_value=data_min, max_value=data_max, format="DD/MM/YYYY", key="sf_log_data_inicio")
-    data_fim = col_dt_fim.date_input("Data fim", value=data_max, min_value=data_min, max_value=data_max, format="DD/MM/YYYY", key="sf_log_data_fim")
+    data_inicio = col_dt_ini.date_input("Data início (dd/mm/aaaa)", value=data_min, min_value=data_min, max_value=data_max, format="DD/MM/YYYY", key="sf_log_data_inicio")
+    data_fim = col_dt_fim.date_input("Data fim (dd/mm/aaaa)", value=data_max, min_value=data_min, max_value=data_max, format="DD/MM/YYYY", key="sf_log_data_fim")
 
     inicio = pd.to_datetime(data_inicio)
     fim = pd.to_datetime(data_fim) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
@@ -1026,6 +1058,9 @@ st.caption(f"Usuário logado: {obter_usuario_logado_sf()}")
 # =============================
 
 with st.sidebar:
+    if st.button("🔁 Reiniciar sessão do indicador", use_container_width=True):
+        reiniciar_sessao_streamlit_sf("Reinício manual pelo usuário")
+    st.divider()
     if os.path.exists("logo_claro.png"):
         st.image("logo_claro.png", use_container_width=True)
 
