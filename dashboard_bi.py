@@ -10,6 +10,8 @@ import os
 import io
 import base64
 import hashlib
+import gc
+import requests
 
 
 
@@ -105,7 +107,7 @@ from datetime import timedelta
 
 st.title("Dashboard Separação e Faturamento")
 # Ajusta para o horário de Brasília (UTC-3)
-horario_brasilia = datetime.now() - timedelta(hours=3)
+horario_brasilia = datetime.now(ZoneInfo('America/Sao_Paulo'))
 st.caption(f"Atualizado em {horario_brasilia.strftime('%d/%m/%Y %H:%M')}")
 
 # =============================
@@ -232,15 +234,26 @@ if st.button("🔄 Atualizar dados"):
 # =============================
 
 
-@st.cache_data(show_spinner="Carregando base atualizada...")
+@st.cache_resource(show_spinner="Carregando base atualizada...", max_entries=1)
 def load_data(path, data_modificacao):
     # data_modificacao entra na chave do cache.
     # Quando o arquivo XLSB for atualizado no GitHub/Streamlit, o cache é invalidado automaticamente.
     # =============================
     # LEITURA ESTÁVEL DA BASE PRINCIPAL (mantém o comportamento original)
     # =============================
-    df = pd.read_excel(path, engine='pyxlsb')
-    df.columns = df.columns.str.strip()
+    caminho = Path(path)
+    if caminho.suffix.lower() == '.parquet':
+        df = pd.read_parquet(caminho)
+        df.columns = df.columns.astype(str).str.strip()
+        # O Parquet pode ter sido gerado de uma versao anterior do app.
+        # Se ja estiver processado, retorna sem repetir todo o tratamento pesado.
+        colunas_processadas = {'Data NF', 'Mes_Ano', 'aging_num', 'flag_d0', 'flag_d1', 'flag_d2'}
+        if colunas_processadas.issubset(df.columns):
+            df['Data NF'] = pd.to_datetime(df['Data NF'], errors='coerce')
+            return df
+    else:
+        df = pd.read_excel(caminho, engine='pyxlsb')
+        df.columns = df.columns.astype(str).str.strip()
 
     # =============================
     # SANEAR CATEGORIAS
@@ -483,24 +496,36 @@ def load_data(path, data_modificacao):
         df.attrs['erro_corte'] = 'Nenhuma aba de corte válida foi detectada automaticamente e nenhum arquivo auxiliar foi encontrado.'
 
     # Extrai apenas o número depois do D+
-    df['aging_num'] = df['Aging_Ajustado_D+'].astype(str).str.extract(r'D\+(\d+)').astype(int)
-    df['flag_d0'] = df['aging_num'] == 0
-    df['flag_d1'] = df['aging_num'] == 1
-    df['flag_d2'] = df['aging_num'] == 2
+    if 'Aging_Ajustado_D+' not in df.columns:
+        raise KeyError("Coluna 'Aging_Ajustado_D+' nao encontrada na base.")
+    df['aging_num'] = pd.to_numeric(
+        df['Aging_Ajustado_D+'].astype(str).str.extract(r'D\+(\d+)', expand=False),
+        errors='coerce'
+    ).astype('Int16')
+    df['flag_d0'] = df['aging_num'].eq(0).fillna(False)
+    df['flag_d1'] = df['aging_num'].eq(1).fillna(False)
+    df['flag_d2'] = df['aging_num'].eq(2).fillna(False)
     return df
 
-# Para o GitHub, o arquivo deve estar na raiz do repositório
-caminho_arquivo = "Faturamento SLA 2026.xlsb"
+# Para o GitHub, os arquivos devem estar na raiz do repositório.
+# O Parquet processado e preferido porque abre muito mais rapido e usa menos memoria.
+ARQUIVO_PARQUET = "Faturamento SLA 2026_processado.parquet"
+ARQUIVO_XLSB = "Faturamento SLA 2026.xlsb"
+caminho_arquivo = ARQUIVO_PARQUET if os.path.exists(ARQUIVO_PARQUET) else ARQUIVO_XLSB
 
 if not os.path.exists(caminho_arquivo):
-    st.error(f"Arquivo {caminho_arquivo} não encontrado!")
+    st.error(f"Base não encontrada. Envie {ARQUIVO_PARQUET} ou {ARQUIVO_XLSB} para a raiz do repositório.")
     st.stop()
 
 try:
     data_modificacao_base = os.path.getmtime(caminho_arquivo)
     df = load_data(caminho_arquivo, data_modificacao_base)
+except MemoryError:
+    gc.collect()
+    st.error("Memória insuficiente para abrir a base XLSB. Gere e publique o arquivo Parquet processado.")
+    st.stop()
 except Exception as e:
-    st.error(f"Erro ao carregar a base: {e}")
+    st.error(f"Erro ao carregar a base ({type(e).__name__}): {e}")
     st.stop()
 
 if st.session_state.pop('_forcou_atualizacao_base_sf', False):
@@ -1156,7 +1181,7 @@ with st.sidebar:
                 filtros_selecionados[col] = vals
                 if vals:
                     mask &= df[col].isin(vals)
-dff_global = df[mask].copy()
+dff_global = df.loc[mask]
 empresas_filtradas = filtros_selecionados.get('Empresa', [])
 
 if aba != "📊 Dashboard de Acessos":
